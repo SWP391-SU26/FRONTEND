@@ -1,505 +1,435 @@
+import { AnimatePresence, motion } from 'framer-motion'
 import {
-  BookOpen,
+  ArrowUpDown,
+  Database,
+  Eye,
+  FilePlus2,
   FileText,
-  Filter,
   Grid2X2,
-  HardDrive,
-  List,
-  MoreHorizontal,
+  PencilLine,
   RefreshCcw,
   Search,
+  Table2,
   Trash2,
-  Upload,
 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import Button from '../components/common/Button.jsx'
-import { libraryDocuments } from '../data/mockDocuments.js'
+import {
+  Button,
+  ConfirmModal,
+  EmptyState,
+  Field,
+  IconButton,
+  Panel,
+  SelectField,
+  StatusBadge,
+} from '../components/ui.jsx'
+import { documents as seedDocuments, workspaces } from '../data/mockData.js'
+import { cn } from '../utils/cn.js'
 
-const statusStyles = {
-  Failed: 'bg-red-100 text-red-700',
-  Indexed: 'bg-emerald-100 text-emerald-700',
-  Processing: 'bg-amber-100 text-amber-700',
-  Uploaded: 'bg-slate-100 text-slate-700',
-}
-
-const recentQueries = [
-  {
-    subtitle: 'Cited 2 documents',
-    title: 'RAG vs fine-tuning update cost',
-  },
-  {
-    subtitle: 'Generated 24 min ago',
-    title: 'RAGAS metrics for SWP demo',
-  },
-]
+const allOption = 'All'
+const fileTypes = [allOption, 'PDF', 'DOCX', 'PPTX']
+const statuses = [allOption, 'Uploaded', 'Processing', 'Indexed', 'Failed']
+const chapters = [allOption, ...Array.from(new Set(seedDocuments.map((doc) => doc.chapter)))]
+const subjects = [allOption, ...workspaces.map((workspace) => workspace.name)]
 
 function LibraryPage() {
-  const [documents, setDocuments] = useState(libraryDocuments)
-  const [search, setSearch] = useState('')
-  const [filters, setFilters] = useState({
-    chapter: 'All',
-    fileType: 'All',
-    status: 'All',
-    subject: 'All',
-    uploadedAt: 'All',
-  })
-  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [docs, setDocs] = useState(seedDocuments)
+  const [query, setQuery] = useState('')
+  const [subject, setSubject] = useState(allOption)
+  const [chapter, setChapter] = useState(allOption)
+  const [type, setType] = useState(allOption)
+  const [status, setStatus] = useState(allOption)
+  const [date, setDate] = useState(allOption)
+  const [viewMode, setViewMode] = useState('bento')
+  const [docToDelete, setDocToDelete] = useState(null)
+  const [renamingDoc, setRenamingDoc] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
   const fileInputRef = useRef(null)
 
-  const filterOptions = useMemo(
-    () => ({
-      chapter: ['All', ...new Set(documents.map((doc) => doc.chapter))],
-      fileType: ['All', ...new Set(documents.map((doc) => doc.fileType))],
-      status: ['All', ...new Set(documents.map((doc) => doc.status))],
-      subject: ['All', ...new Set(documents.map((doc) => doc.subject))],
-      uploadedAt: ['All', ...new Set(documents.map((doc) => doc.uploadedAt))],
-    }),
-    [documents],
-  )
+  const filteredDocs = useMemo(() => {
+    return docs.filter((doc) => {
+      const normalizedQuery = query.trim().toLowerCase()
+      const matchesQuery =
+        !normalizedQuery ||
+        doc.displayName.toLowerCase().includes(normalizedQuery) ||
+        doc.preview.toLowerCase().includes(normalizedQuery)
+      const matchesSubject = subject === allOption || doc.subject === subject
+      const matchesChapter = chapter === allOption || doc.chapter === chapter
+      const matchesType = type === allOption || doc.type === type
+      const matchesStatus = status === allOption || doc.status === status
+      const matchesDate =
+        date === allOption ||
+        (date === 'Today' && doc.uploadedAt.startsWith('May 27, 2026')) ||
+        (date === 'This week' && doc.uploadedAt.includes('May'))
 
-  const filteredDocuments = documents.filter((document) => {
-    const matchesSearch =
-      document.name.toLowerCase().includes(search.toLowerCase()) ||
-      document.subject.toLowerCase().includes(search.toLowerCase())
-
-    const matchesFilters = Object.entries(filters).every(([key, value]) => {
-      if (value === 'All') {
-        return true
-      }
-
-      return document[key] === value
+      return matchesQuery && matchesSubject && matchesChapter && matchesType && matchesStatus && matchesDate
     })
+  }, [chapter, date, docs, query, status, subject, type])
 
-    return matchesSearch && matchesFilters
-  })
-
-  function handleFilterChange(event) {
-    const { name, value } = event.target
-    setFilters((currentFilters) => ({ ...currentFilters, [name]: value }))
+  function resetFilters() {
+    setQuery('')
+    setSubject(allOption)
+    setChapter(allOption)
+    setType(allOption)
+    setStatus(allOption)
+    setDate(allOption)
   }
 
-  function handleUploadClick() {
-    fileInputRef.current?.click()
+  function handleUpload(files) {
+    const nextDocs = Array.from(files)
+      .filter((file) => /\.(pdf|docx|pptx|ppt)$/i.test(file.name))
+      .map((file) => {
+        const extension = file.name.split('.').pop()?.toUpperCase()
+        return {
+          id: `doc-${Date.now()}-${file.name}`,
+          name: file.name,
+          displayName: file.name.replace(/\.[^/.]+$/, ''),
+          type: extension === 'PPT' ? 'PPTX' : extension,
+          subject: 'Artificial Intelligence',
+          chapter: 'Chapter 1',
+          status: 'Uploaded',
+          chunks: 0,
+          embeddingModel: 'Not embedded',
+          uploadedAt: 'May 27, 2026 23:45',
+          size: `${Math.max(0.6, file.size / 1024 / 1024).toFixed(1)} MB`,
+          pages: 0,
+          relevance: 0,
+          workspaceId: 'ai',
+          preview:
+            'A new document is queued for text extraction, chunking, and embedding.',
+        }
+      })
+
+    setDocs((current) => [...nextDocs, ...current])
   }
 
-  function handleFileChange(event) {
-    const file = event.target.files?.[0]
-
-    if (!file) {
-      return
-    }
-
-    const extension = file.name.split('.').pop()?.toUpperCase() ?? 'FILE'
-    const nextDocument = {
-      id: `doc-${Date.now()}`,
-      chapter: 'Unassigned',
-      chunkCount: 0,
-      embeddingModel: 'text-embedding-3-small',
-      fileSize: `${Math.max(file.size / 1024 / 1024, 0.1).toFixed(1)} MB`,
-      fileType: extension,
-      indexedAt: '',
-      name: file.name,
-      pages: 0,
-      status: 'Uploaded',
-      subject: 'SWP Project',
-      uploadedAt: '2026-05-31',
-    }
-
-    setDocuments((currentDocuments) => [nextDocument, ...currentDocuments])
-    event.target.value = ''
+  function startRename(doc) {
+    setRenamingDoc(doc.id)
+    setRenameValue(doc.displayName)
   }
 
-  function handleRename(documentId) {
-    const nextName = window.prompt('Enter a new document name:')
-
-    if (!nextName?.trim()) {
-      return
-    }
-
-    setDocuments((currentDocuments) =>
-      currentDocuments.map((document) =>
-        document.id === documentId
-          ? { ...document, name: nextName.trim() }
-          : document,
+  function commitRename() {
+    setDocs((current) =>
+      current.map((doc) =>
+        doc.id === renamingDoc ? { ...doc, displayName: renameValue || doc.displayName } : doc,
       ),
     )
+    setRenamingDoc(null)
+    setRenameValue('')
   }
 
-  function handleReindex(documentId) {
-    setDocuments((currentDocuments) =>
-      currentDocuments.map((document) =>
-        document.id === documentId
-          ? { ...document, status: 'Processing' }
-          : document,
-      ),
+  function reindexDoc(docId) {
+    setDocs((current) =>
+      current.map((doc) => (doc.id === docId ? { ...doc, status: 'Processing' } : doc)),
     )
-
     window.setTimeout(() => {
-      setDocuments((currentDocuments) =>
-        currentDocuments.map((document) =>
-          document.id === documentId
+      setDocs((current) =>
+        current.map((doc) =>
+          doc.id === docId
             ? {
-                ...document,
-                chunkCount: Math.max(document.chunkCount, 12),
-                indexedAt: '2026-05-31 12:00',
+                ...doc,
                 status: 'Indexed',
+                chunks: doc.chunks || 28,
+                embeddingModel: 'text-embedding-3-small',
+                relevance: doc.relevance || 82,
               }
-            : document,
+            : doc,
         ),
       )
     }, 1000)
   }
 
-  function confirmDelete() {
-    if (!deleteTarget) {
-      return
-    }
-
-    setDocuments((currentDocuments) =>
-      currentDocuments.filter((document) => document.id !== deleteTarget.id),
-    )
-    setDeleteTarget(null)
-  }
-
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_18%_12%,rgba(15,118,110,0.12),transparent_32%),radial-gradient(circle_at_86%_18%,rgba(20,184,166,0.12),transparent_30%),linear-gradient(135deg,#f8fbff_0%,#f6f8fb_48%,#eef7f5_100%)] p-8 font-body text-foreground">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex items-start justify-between">
+    <div className="space-y-4">
+      <Panel className="overflow-hidden p-5">
+        <div className="pointer-events-none absolute inset-0 opacity-60">
+          <div className="abstract-canvas" />
+        </div>
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Link className="mb-5 inline-flex items-center" to="/app">
-              <img
-                alt="FStu"
-                className="h-10 w-auto object-contain"
-                src="/Gemini_Generated_Image_gyb1mfgyb1mfgyb1.png"
-              />
-            </Link>
-            <h1 className="text-5xl font-black tracking-[-0.055em] text-slate-950">
+            <h1 className="text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
               Knowledge Library
             </h1>
-            <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-muted-foreground">
-              Manage uploaded course documents, track indexing status, organize
-              by subject, and inspect chunks for grounded chat.
+            <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
+              Manage uploaded sources, filter quickly, re-index documents, and open chunk-level readers from one workspace.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button as={Link} className="rounded-full" to="/app" variant="secondary">
-              Back to workspace
-            </Button>
-            <input
-              accept=".pdf,.docx,.ppt,.pptx"
-              className="hidden"
-              onChange={handleFileChange}
-              ref={fileInputRef}
-              type="file"
-            />
-            <Button className="rounded-xl" onClick={handleUploadClick} type="button" variant="cta">
-              <Upload className="size-4" strokeWidth={2} />
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => fileInputRef.current?.click()}>
+              <FilePlus2 size={17} />
               Upload document
             </Button>
+            <Button onClick={resetFilters} variant="secondary">
+              <RefreshCcw size={16} />
+              Reset
+            </Button>
           </div>
-        </header>
-
-        <section className="mt-8 grid grid-cols-3 gap-5">
-          <StatCard
-            accent="teal"
-            label="Total Documents"
-            meta="+2 this week"
-            value={documents.length}
-          />
-          <StatCard
-            accent="emerald"
-            label="Chunks Indexed"
-            meta={`${documents.filter((doc) => doc.status === 'Processing').length} processing`}
-            value={documents
-              .reduce((total, document) => total + document.chunkCount, 0)
-              .toLocaleString()}
-          />
-          <StatCard
-            accent="cyan"
-            label="Top Subject"
-            meta="Most active"
-            value="Artificial Intelligence"
-          />
-        </section>
-
-        <section className="mt-5">
-          <div className="rounded-[1.25rem] border border-white/80 bg-white/75 p-4 shadow-[0_20px_70px_rgba(15,23,42,0.06)] backdrop-blur">
-            <div className="grid grid-cols-[1.5fr_repeat(5,1fr)] gap-3">
-              <label className="relative">
-                <Search className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  className="h-12 w-full rounded-2xl border border-border bg-white pl-11 pr-4 text-sm font-medium outline-none transition focus:border-primary focus:shadow-[0_0_0_4px_hsl(var(--primary)/0.10)]"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search by file or subject..."
-                  value={search}
-                />
-              </label>
-
-              <LibraryFilter label="Subject" name="subject" onChange={handleFilterChange} options={filterOptions.subject} value={filters.subject} />
-              <LibraryFilter label="Chapter" name="chapter" onChange={handleFilterChange} options={filterOptions.chapter} value={filters.chapter} />
-              <LibraryFilter label="Type" name="fileType" onChange={handleFilterChange} options={filterOptions.fileType} value={filters.fileType} />
-              <LibraryFilter label="Status" name="status" onChange={handleFilterChange} options={filterOptions.status} value={filters.status} />
-              <LibraryFilter label="Uploaded" name="uploadedAt" onChange={handleFilterChange} options={filterOptions.uploadedAt} value={filters.uploadedAt} />
-            </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <button className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20" type="button">
-                <Grid2X2 className="size-4" strokeWidth={2} />
-              </button>
-              <button className="grid size-10 place-items-center rounded-xl bg-secondary text-muted-foreground transition hover:text-primary" type="button">
-                <List className="size-4" strokeWidth={2} />
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-white/80 bg-white shadow-[0_24px_90px_rgba(15,23,42,0.10)]">
-            <table className="w-full border-collapse text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-4">Document</th>
-                  <th className="px-4 py-4">Type</th>
-                  <th className="px-4 py-4">Subject</th>
-                  <th className="px-4 py-4">Chapter</th>
-                  <th className="px-4 py-4">Status</th>
-                  <th className="px-4 py-4">Chunks</th>
-                  <th className="px-4 py-4">Embedding</th>
-                  <th className="px-4 py-4">Uploaded</th>
-                  <th className="px-4 py-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filteredDocuments.map((document) => (
-                  <DocumentRow
-                    document={document}
-                    key={document.id}
-                    onDelete={() => setDeleteTarget(document)}
-                    onReindex={() => handleReindex(document.id)}
-                    onRename={() => handleRename(document.id)}
-                  />
-                ))}
-              </tbody>
-            </table>
-            <div className="flex items-center justify-between border-t border-border bg-white px-5 py-4 text-xs font-semibold text-muted-foreground">
-              <span>
-                Showing 1-{filteredDocuments.length} of {documents.length}{' '}
-                documents
-              </span>
-              <div className="flex items-center gap-2">
-                <button className="rounded-lg px-2 py-1 text-muted-foreground" type="button">
-                  ‹
-                </button>
-                <button className="rounded-lg border border-primary/30 bg-teal-50 px-3 py-1 font-black text-primary" type="button">
-                  1
-                </button>
-                <button className="rounded-lg px-3 py-1 text-muted-foreground" type="button">
-                  2
-                </button>
-                <button className="rounded-lg px-2 py-1 text-muted-foreground" type="button">
-                  ›
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {!filteredDocuments.length ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-border bg-secondary px-6 py-10 text-center">
-              <Filter className="mx-auto size-7 text-primary" strokeWidth={2} />
-              <h2 className="mt-3 text-lg font-black">No documents found</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Try changing the search keyword or clearing some filters.
-              </p>
-            </div>
-          ) : null}
-        </section>
-
-        <section className="mt-5 grid grid-cols-[1.5fr_0.7fr] gap-5">
-          <div className="rounded-[1.5rem] border border-white/80 bg-white/85 p-5 shadow-[0_20px_70px_rgba(15,23,42,0.07)]">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-black text-foreground">
-                Recently Queried
-              </h2>
-              <Link className="text-xs font-black text-primary" to="/chat">
-                View history
-              </Link>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-4">
-              {recentQueries.map((query) => (
-                <article
-                  className="flex items-center gap-4 rounded-2xl border border-border bg-slate-50 p-4 transition hover:-translate-y-0.5 hover:border-primary/40 hover:bg-teal-50"
-                  key={query.title}
-                >
-                  <span className="grid size-10 place-items-center rounded-2xl bg-white text-primary">
-                    <BookOpen className="size-5" strokeWidth={2} />
-                  </span>
-                  <div>
-                    <h3 className="text-sm font-black">{query.title}</h3>
-                    <p className="mt-1 text-xs font-semibold text-muted-foreground">
-                      {query.subtitle}
-                    </p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-[1.5rem] border border-white/80 bg-white/85 p-5 shadow-[0_20px_70px_rgba(15,23,42,0.07)]">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-2xl bg-teal-50 text-primary">
-                <HardDrive className="size-5" strokeWidth={2} />
-              </span>
-              <h2 className="text-sm font-black text-foreground">
-                Storage Usage
-              </h2>
-            </div>
-            <p className="mt-5 text-3xl font-black tracking-tight">8.4 GB</p>
-            <p className="text-xs font-semibold text-muted-foreground">
-              of 20 GB
-            </p>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary">
-              <div className="h-full w-[42%] rounded-full bg-primary" />
-            </div>
-            <div className="mt-4 space-y-2 text-xs font-semibold text-muted-foreground">
-              <UsageRow label="PDFs" value="6.2 GB" />
-              <UsageRow label="Slides" value="1.8 GB" />
-              <UsageRow label="Other" value="0.4 GB" />
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {deleteTarget ? (
-        <ConfirmModal
-          document={deleteTarget}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={confirmDelete}
+        </div>
+        <input
+          accept=".pdf,.docx,.ppt,.pptx"
+          className="sr-only"
+          multiple
+          onChange={(event) => handleUpload(event.target.files)}
+          ref={fileInputRef}
+          type="file"
         />
+        <div className="relative mt-5 grid gap-3 md:grid-cols-3">
+          <StatCard icon={FileText} label="Documents" value={docs.length} />
+          <StatCard icon={Database} label="Indexed" value={docs.filter((doc) => doc.status === 'Indexed').length} />
+          <StatCard icon={LayersIcon} label="Chunks" value={docs.reduce((total, doc) => total + doc.chunks, 0)} />
+        </div>
+      </Panel>
+
+      <Panel className="sticky top-[78px] z-30 p-3 sm:p-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.35fr_1fr_1fr_1fr_1fr_1fr_auto]">
+          <Field
+            icon={Search}
+            label="Search documents"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search by filename or content..."
+            value={query}
+          />
+          <SelectField label="Subject" onChange={(event) => setSubject(event.target.value)} value={subject}>
+            {subjects.map((item) => <option key={item}>{item}</option>)}
+          </SelectField>
+          <SelectField label="Chapter" onChange={(event) => setChapter(event.target.value)} value={chapter}>
+            {chapters.map((item) => <option key={item}>{item}</option>)}
+          </SelectField>
+          <SelectField label="File type" onChange={(event) => setType(event.target.value)} value={type}>
+            {fileTypes.map((item) => <option key={item}>{item}</option>)}
+          </SelectField>
+          <SelectField label="Status" onChange={(event) => setStatus(event.target.value)} value={status}>
+            {statuses.map((item) => <option key={item}>{item}</option>)}
+          </SelectField>
+          <SelectField label="Uploaded" onChange={(event) => setDate(event.target.value)} value={date}>
+            {[allOption, 'Today', 'This week'].map((item) => <option key={item}>{item}</option>)}
+          </SelectField>
+          <div className="flex rounded-lg bg-white/72 p-1 shadow-inner">
+            <IconButton
+              className={viewMode === 'bento' ? 'bg-primary text-white hover:bg-teal-800 hover:text-white' : ''}
+              label="Bento view"
+              onClick={() => setViewMode('bento')}
+            >
+              <Grid2X2 size={15} />
+            </IconButton>
+            <IconButton
+              className={viewMode === 'table' ? 'bg-primary text-white hover:bg-teal-800 hover:text-white' : ''}
+              label="Table view"
+              onClick={() => setViewMode('table')}
+            >
+              <Table2 size={15} />
+            </IconButton>
+          </div>
+        </div>
+      </Panel>
+
+      {docs.length === 0 ? (
+        <EmptyState
+          action={<Button onClick={() => fileInputRef.current?.click()}><FilePlus2 size={17} />Upload first document</Button>}
+          description="The library has no documents yet. Upload a PDF, DOCX, or PPTX file to start indexing and source-grounded chat."
+          title="No documents yet"
+        />
+      ) : filteredDocs.length === 0 ? (
+        <EmptyState
+          action={<Button onClick={resetFilters} variant="secondary">Clear filters</Button>}
+          description="No documents match the current filters. Try another keyword or broaden the filters."
+          title="No matching documents"
+        />
+      ) : viewMode === 'bento' ? (
+        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} onReindex={reindexDoc} onRename={startRename} />
+      ) : (
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={reindexDoc} onRename={startRename} />
+      )}
+
+      {viewMode === 'bento' && filteredDocs.length > 0 ? (
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={reindexDoc} onRename={startRename} compact />
       ) : null}
-    </main>
-  )
-}
 
-function StatCard({ accent, label, meta, value }) {
-  const accentMap = {
-    cyan: 'bg-cyan-50 text-cyan-700',
-    emerald: 'bg-emerald-50 text-emerald-700',
-    teal: 'bg-teal-50 text-primary',
-  }
+      {docToDelete ? (
+        <ConfirmModal
+          actionLabel="Delete document"
+          onCancel={() => setDocToDelete(null)}
+          onConfirm={() => {
+            setDocs((current) => current.filter((doc) => doc.id !== docToDelete.id))
+            setDocToDelete(null)
+          }}
+          title="Delete document?"
+        >
+          "{docToDelete.displayName}" will be removed from the local document list.
+        </ConfirmModal>
+      ) : null}
 
-  return (
-    <article className="rounded-[1.5rem] border border-white/80 bg-white/85 p-5 shadow-[0_20px_70px_rgba(15,23,42,0.07)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_90px_rgba(15,118,110,0.10)]">
-      <div className="flex items-start justify-between">
-        <span className={`${accentMap[accent]} grid size-10 place-items-center rounded-2xl`}>
-          <FileText className="size-5" strokeWidth={2} />
-        </span>
-        <span className="rounded-full bg-teal-50 px-3 py-1 text-[11px] font-black text-primary">
-          {meta}
-        </span>
-      </div>
-      <p className="mt-5 text-sm font-black text-muted-foreground">{label}</p>
-      <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950">
-        {value}
-      </h2>
-    </article>
-  )
-}
-
-function UsageRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span>{label}</span>
-      <span className="font-black text-foreground">{value}</span>
+      <AnimatePresence>
+        {renamingDoc ? (
+          <motion.div
+            className="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="os-panel w-full max-w-md p-5 shadow-xl"
+              initial={{ opacity: 0, y: 24, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            >
+              <h2 className="text-lg font-black tracking-tight text-slate-950">Rename document</h2>
+              <p className="mt-2 text-sm font-semibold text-slate-600">
+                The new display name will be updated in the local list.
+              </p>
+              <input
+                autoFocus
+                className="mt-4 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') commitRename()
+                }}
+                value={renameValue}
+              />
+              <div className="mt-5 flex justify-end gap-2">
+                <Button onClick={() => { setRenamingDoc(null); setRenameValue('') }} variant="secondary">
+                  Cancel
+                </Button>
+                <Button onClick={commitRename}>Save name</Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }
 
-function LibraryFilter({ label, name, onChange, options, value }) {
-  return (
-    <label>
-      <span className="sr-only">{label}</span>
-      <select
-        className="h-12 w-full rounded-2xl border border-border bg-white px-3 text-sm font-bold outline-none transition focus:border-primary focus:shadow-[0_0_0_4px_hsl(var(--primary)/0.10)]"
-        name={name}
-        onChange={onChange}
-        value={value}
-      >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option === 'All' ? label : option}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
+function LayersIcon(props) {
+  return <Database {...props} />
 }
 
-function DocumentRow({ document, onDelete, onReindex, onRename }) {
+function StatCard({ icon: Icon, label, value }) {
   return (
-    <tr className="transition hover:bg-teal-50/40">
-      <td className="max-w-[260px] px-4 py-4">
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-secondary text-primary">
-            <FileText className="size-5" strokeWidth={2} />
-          </span>
-          <Link className="min-w-0" to={`/library/documents/${document.id}`}>
-            <p className="truncate font-black text-foreground">{document.name}</p>
-            <p className="mt-1 text-xs font-semibold text-muted-foreground">
-              {document.fileSize} / {document.pages} pages
-            </p>
-          </Link>
+    <motion.div className="bento-card p-4" whileHover={{ y: -4 }}>
+      <div className="flex items-center justify-between">
+        <div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary">
+          <Icon size={17} />
         </div>
-      </td>
-      <td className="px-4 py-4 font-bold">{document.fileType}</td>
-      <td className="px-4 py-4 text-muted-foreground">{document.subject}</td>
-      <td className="px-4 py-4 text-muted-foreground">{document.chapter}</td>
-      <td className="px-4 py-4">
-        <span className={`${statusStyles[document.status]} rounded-full px-3 py-1 text-xs font-black`}>
-          {document.status}
-        </span>
-      </td>
-      <td className="px-4 py-4 font-black">{document.chunkCount}</td>
-      <td className="px-4 py-4 text-xs font-bold text-muted-foreground">
-        {document.embeddingModel}
-      </td>
-      <td className="px-4 py-4 text-muted-foreground">{document.uploadedAt}</td>
-      <td className="px-4 py-4">
-        <div className="flex items-center gap-1">
-          <Button as={Link} className="h-9 rounded-full px-3 text-xs" to={`/library/documents/${document.id}`} variant="secondary">
-            View
-          </Button>
-          <button className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary hover:text-primary" onClick={onRename} type="button">
-            Rename
-          </button>
-          <button className="rounded-full p-2 text-muted-foreground transition hover:bg-secondary hover:text-primary" onClick={onReindex} type="button">
-            <RefreshCcw className="size-4" strokeWidth={2} />
-          </button>
-          <button className="rounded-full p-2 text-muted-foreground transition hover:bg-red-50 hover:text-red-600" onClick={onDelete} type="button">
-            <Trash2 className="size-4" strokeWidth={2} />
-          </button>
-          <MoreHorizontal className="size-4 text-muted-foreground" />
-        </div>
-      </td>
-    </tr>
-  )
-}
-
-function ConfirmModal({ document, onCancel, onConfirm }) {
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-[2rem] border border-white/80 bg-white p-6 shadow-[0_34px_120px_rgba(15,23,42,0.22)]">
-        <h2 className="text-2xl font-black tracking-tight">Delete document?</h2>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          This will remove <span className="font-black text-foreground">{document.name}</span> from the current workspace.
-        </p>
-        <div className="mt-6 flex justify-end gap-3">
-          <Button className="rounded-full" onClick={onCancel} type="button" variant="secondary">
-            Cancel
-          </Button>
-          <Button className="rounded-full bg-red-600 text-white shadow-red-600/20 hover:bg-red-700" onClick={onConfirm} type="button" variant="cta">
-            Delete
-          </Button>
-        </div>
+        <p className="text-3xl font-black">{value}</p>
       </div>
+      <p className="mt-3 text-xs font-black uppercase tracking-[0.14em] text-slate-500">{label}</p>
+    </motion.div>
+  )
+}
+
+function DocumentCards({ docs, onDelete, onReindex, onRename }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      {docs.map((doc, index) => (
+        <motion.article
+          className="bento-card p-4"
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: index * 0.03, duration: 0.32 }}
+          key={doc.id}
+          whileHover={{ y: -6, rotateX: 1.2 }}
+        >
+          <div className="flex items-start gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary shadow-sm">
+              <FileText size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-sm font-black text-slate-950">{doc.displayName}</h2>
+              <p className="mt-1 text-xs font-semibold text-slate-500">{doc.subject} / {doc.chapter}</p>
+            </div>
+            <StatusBadge status={doc.status} />
+          </div>
+          <p className="mt-4 line-clamp-3 min-h-[4.5rem] text-sm font-medium leading-6 text-slate-600">
+            {doc.preview}
+          </p>
+          <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+            <span className="rounded-lg bg-teal-50 px-2 py-2 font-black text-teal-700">{doc.type}</span>
+            <span className="rounded-lg bg-emerald-50 px-2 py-2 font-black text-emerald-700">{doc.chunks} chunks</span>
+            <span className="rounded-lg bg-slate-100 px-2 py-2 font-black text-slate-600">{doc.size}</span>
+          </div>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+            <motion.div
+              className="shimmer-line h-full rounded-full bg-gradient-to-r from-primary via-teal-400 to-emerald-300"
+              initial={{ width: 0 }}
+              animate={{ width: `${doc.relevance || (doc.status === 'Indexed' ? 78 : 26)}%` }}
+              transition={{ duration: 0.6, delay: index * 0.04 }}
+            />
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link className="flex-1" to={`/library/documents/${doc.id}`}>
+              <Button className="w-full" variant="secondary"><Eye size={16} />View</Button>
+            </Link>
+            <IconButton label="Rename" onClick={() => onRename(doc)}><PencilLine size={16} /></IconButton>
+            <IconButton label="Re-index" onClick={() => onReindex(doc.id)}><RefreshCcw size={16} /></IconButton>
+            <IconButton label="Delete" onClick={() => onDelete(doc)}><Trash2 size={16} /></IconButton>
+          </div>
+        </motion.article>
+      ))}
     </div>
+  )
+}
+
+function DocumentTable({ compact = false, docs, onDelete, onReindex, onRename }) {
+  return (
+    <Panel className={cn('overflow-hidden', compact ? 'hidden xl:block' : '')}>
+      <div className="flex items-center justify-between border-b border-border p-4">
+        <div>
+          <h2 className="text-lg font-black tracking-tight">Table mode</h2>
+          <p className="text-sm font-semibold text-slate-500">Scan metadata and actions at a glance.</p>
+        </div>
+        <Table2 className="text-slate-400" size={20} />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
+          <thead className="bg-white/52 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            <tr>
+              {['Document', 'Type', 'Subject', 'Chapter', 'Status', 'Chunks', 'Embedding', 'Uploaded', 'Actions'].map((heading) => (
+                <th className="border-b border-slate-200 px-4 py-3" key={heading}>
+                  <span className="inline-flex items-center gap-1">
+                    {heading}
+                    {heading === 'Document' ? <ArrowUpDown size={13} /> : null}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {docs.map((doc) => (
+              <motion.tr className="bg-white/70 transition hover:bg-teal-50/70" key={doc.id} whileHover={{ scale: 1.003 }}>
+                <td className="max-w-[260px] px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary">
+                      <FileText size={17} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-slate-950">{doc.displayName}</p>
+                      <p className="truncate text-xs font-semibold text-slate-500">{doc.preview}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-4 py-4 font-black text-slate-600">{doc.type}</td>
+                <td className="px-4 py-4 text-slate-600">{doc.subject}</td>
+                <td className="px-4 py-4 text-slate-600">{doc.chapter}</td>
+                <td className="px-4 py-4"><StatusBadge status={doc.status} /></td>
+                <td className="px-4 py-4 font-semibold text-slate-600">{doc.chunks}</td>
+                <td className="px-4 py-4 text-xs font-semibold text-slate-500">{doc.embeddingModel}</td>
+                <td className="px-4 py-4 text-slate-600">{doc.uploadedAt}</td>
+                <td className="px-4 py-4">
+                  <div className="flex items-center gap-1">
+                    <Link to={`/library/documents/${doc.id}`}><IconButton label="View details"><Eye size={15} /></IconButton></Link>
+                    <IconButton label="Rename" onClick={() => onRename(doc)}><PencilLine size={15} /></IconButton>
+                    <IconButton label="Re-index" onClick={() => onReindex(doc.id)}><RefreshCcw size={15} /></IconButton>
+                    <IconButton label="Delete" onClick={() => onDelete(doc)}><Trash2 size={15} /></IconButton>
+                  </div>
+                </td>
+              </motion.tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
   )
 }
 
