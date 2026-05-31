@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "latest",
+    "lucide-react": "^1.17.0",
     "react": "latest",
     "react-dom": "latest",
+    "react-router-dom": "^7.16.0",
     "tailwindcss": "latest"
   },
   "devDependencies": {

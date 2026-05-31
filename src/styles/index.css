@@ -1,9 +1,19 @@
 @import "tailwindcss";
 
 :root {
+  --primary: 176 77% 26%;
+  --primary-foreground: 0 0% 100%;
+  --background: 0 0% 100%;
+  --foreground: 240 10% 10%;
+  --muted-foreground: 240 5% 55%;
+  --border: 210 24% 88%;
+  --nav-bg: 180 23% 97%;
+  --secondary: 210 31% 96%;
+  --accent: 210 31% 96%;
+
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   color: #111827;
   background: #f8fafc;
   font-synthesis: none;
@@ -23,4 +33,150 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+@theme {
+  --font-display: "Manrope", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-border: hsl(var(--border));
+  --color-nav-bg: hsl(var(--nav-bg));
+  --color-secondary: hsl(var(--secondary));
+  --color-accent: hsl(var(--accent));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes auth-shell-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes auth-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--auth-panel-x, 0)) translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
+  }
+}
+
+@keyframes auth-field-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scaleX(0.82);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 900ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animation-delay-150 {
+  animation-delay: 150ms;
+}
+
+.animation-delay-300 {
+  animation-delay: 300ms;
+}
+
+.animation-delay-450 {
+  animation-delay: 450ms;
+}
+
+.animate-auth-shell {
+  animation: auth-shell-in 780ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-auth-panel-left {
+  --auth-panel-x: -28px;
+  animation: auth-panel-in 820ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-auth-panel-right {
+  --auth-panel-x: 28px;
+  animation: auth-panel-in 820ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-auth-field {
+  animation: auth-field-in 640ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animation-delay-75 {
+  animation-delay: 75ms;
+}
+
+.animation-delay-225 {
+  animation-delay: 225ms;
+}
+
+.animation-delay-375 {
+  animation-delay: 375ms;
+}
+
+.animate-message-in {
+  animation: message-in 520ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-soft-pulse {
+  animation: soft-pulse 1.2s cubic-bezier(0.32, 0.72, 0, 1) infinite;
+  transform-origin: left center;
 }
