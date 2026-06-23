@@ -42,8 +42,14 @@
   box-sizing: border-box;
 }
 
-html {
+html,
+body {
+  height: 100%;
   scroll-behavior: smooth;
+}
+
+#root {
+  height: 100%;
 }
 
 body {
@@ -94,10 +100,11 @@ body {
 }
 
 .notebook-grid {
-  min-height: calc(100vh - 112px);
+  height: calc(100vh - 72px);
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(300px, 360px);
+  overflow: hidden;
 }
 
 .studio-grid {
@@ -690,3 +697,15 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Upload / Drop Zone ──────────────────────────────────────────────────── */
+.drop-zone-base {
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.drop-zone-active {
+  border-color: hsl(var(--primary)) !important;
+  background-color: hsl(176 77% 96%) !important;
+  box-shadow: 0 0 0 4px hsl(176 77% 92%);
+}
+

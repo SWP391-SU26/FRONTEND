@@ -103,7 +103,7 @@ function MainLayout() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1560px] overflow-x-clip px-3 pb-10 pt-2 sm:px-5 lg:px-7">
+      <main className="mx-auto w-full max-w-[1560px] overflow-hidden px-3 pt-2 sm:px-5 lg:px-7">
         <Outlet />
       </main>
     </div>

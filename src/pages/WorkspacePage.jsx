@@ -207,7 +207,7 @@ function WorkspacePage() {
         workspaceDocs={workspaceDocs}
       />
 
-      <main className="notebook-panel flex min-h-[760px] flex-col">
+      <main className="notebook-panel flex h-full flex-col overflow-hidden">
         <div className="source-glow" />
         <div className="relative flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
           <div>
@@ -337,62 +337,103 @@ function SourcePanel({
   workspaceDocs,
 }) {
   return (
-    <aside className="notebook-panel flex min-h-[760px] flex-col">
+    <aside className="notebook-panel flex h-full flex-col overflow-hidden">
       <div className="source-glow" />
-      <div className="relative border-b border-border p-4">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">Sources</p>
-        <div className="mt-3 grid gap-2">
+
+      {/* Workspace selector — fixed, compact horizontal pills */}
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Workspace</p>
+        <div className="flex gap-1.5 overflow-x-auto hide-scrollbar">
           {workspaces.map((workspace) => (
             <motion.button
               className={cn(
-                'rounded-lg border px-3 py-3 text-left transition',
+                'shrink-0 rounded-lg border px-2.5 py-1.5 text-left transition',
                 activeWorkspace === workspace.id
                   ? 'border-primary bg-primary text-white'
-                  : 'border-border bg-white/80 text-slate-700 hover:border-teal-200 hover:bg-teal-50',
+                  : 'border-border bg-white/80 text-slate-600 hover:border-teal-300 hover:bg-teal-50',
               )}
               key={workspace.id}
               onClick={() => setActiveWorkspace(workspace.id)}
-              whileHover={{ x: 3 }}
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.96 }}
             >
-              <span className="block text-sm font-black">{workspace.name}</span>
-              <span className="block text-xs font-semibold opacity-60">{workspace.term}</span>
+              <span className="block text-[11px] font-black leading-tight">{workspace.name}</span>
+              <span className="block text-[10px] font-semibold opacity-60">{workspace.term}</span>
             </motion.button>
           ))}
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">Documents</p>
-          <span className="text-xs font-black text-slate-400">{workspaceDocs.length} files</span>
+      {/* Documents — fixed section, compact rows */}
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <div className="mb-1.5 flex items-center justify-between">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Documents</p>
+          <span className="text-[10px] font-black text-slate-400">{workspaceDocs.length} files</span>
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1">
           {workspaceDocs.map((doc) => (
             <motion.article
-              className="rounded-xl border border-border bg-white/82 p-3 shadow-sm"
+              className="flex items-center gap-2 rounded-lg border border-border bg-white/80 px-2.5 py-2 transition hover:border-teal-200 hover:bg-teal-50/50"
               key={doc.id}
-              style={{ y: parallaxY }}
-              whileHover={{ y: -3, rotateX: 1 }}
+              whileHover={{ x: 2 }}
             >
-              <div className="flex gap-3">
-                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary">
-                  <FileText size={16} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-black text-slate-900">{doc.displayName}</p>
-                  <p className="text-xs font-semibold text-slate-500">{doc.chapter} / {doc.chunks} chunks</p>
-                </div>
+              <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary">
+                <FileText size={13} />
               </div>
-              <div className="mt-3 flex items-center justify-between">
-                <StatusBadge status={doc.status} />
-                <span className="text-xs font-black text-slate-400">{doc.type}</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-black text-slate-800">{doc.displayName}</p>
+                <p className="text-[10px] font-semibold text-slate-400">{doc.chapter}</p>
               </div>
+              <StatusBadge status={doc.status} />
             </motion.article>
           ))}
         </div>
+        {/* Upload compact inline */}
+        <button
+          className="mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed border-teal-300 bg-teal-50/60 px-3 py-2 text-left transition hover:bg-teal-50"
+          onClick={() => fileInputRef.current?.click()}
+          type="button"
+        >
+          <input
+            accept=".pdf,.docx,.pptx,.txt"
+            className="sr-only"
+            multiple
+            onChange={(event) => handleFiles(event.target.files)}
+            ref={fileInputRef}
+            type="file"
+          />
+          <Upload className="shrink-0 text-primary" size={14} />
+          <span className="text-xs font-black text-slate-600">Upload document</span>
+          <span className="ml-auto text-[10px] font-semibold text-slate-400">PDF DOCX…</span>
+        </button>
+        <AnimatePresence>
+          {uploadJobs.length > 0 ? (
+            <div className="mt-2 space-y-1.5">
+              {uploadJobs.map((job) => (
+                <motion.div className="rounded-lg bg-white/78 p-2 shadow-sm" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} key={job.id}>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="min-w-0 truncate text-[11px] font-black">{job.name}</p>
+                    <span className="text-[10px] font-black text-primary">{job.step}</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                    <motion.div
+                      className="shimmer-line h-full rounded-full bg-gradient-to-r from-primary via-teal-400 to-emerald-300"
+                      animate={{ width: `${job.progress}%` }}
+                      transition={{ duration: 0.35 }}
+                    />
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          ) : null}
+        </AnimatePresence>
+      </div>
 
-        <UploadBox fileInputRef={fileInputRef} handleFiles={handleFiles} uploadJobs={uploadJobs} />
+      {/* Chat History — scrollable, no visible scrollbar */}
+      <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-2">
+        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+          <History size={11} />
+          Chat history
+        </div>
         <SessionList
           commitRename={commitRename}
           renameValue={renameValue}
@@ -463,130 +504,135 @@ function SessionList({
   startRename,
 }) {
   return (
-    <section className="mt-6">
-      <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-        <History size={14} />
-        Chat history
-      </div>
-      <div className="space-y-2">
-        {sessionList.map((session) => (
-          <motion.div
-            className={cn(
-              'group rounded-lg border p-2 transition',
-              selectedSession === session.id
-                ? 'border-primary bg-teal-50'
-                : 'border-border bg-white/80 hover:bg-teal-50',
-            )}
-            key={session.id}
-            whileHover={{ y: -2 }}
-          >
-            {renamingSession === session.id ? (
-              <div className="flex gap-2">
-                <input
-                  className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1 text-sm font-semibold outline-none focus:border-teal-400"
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') commitRename()
-                  }}
-                  value={renameValue}
-                />
-                <IconButton label="Save name" onClick={commitRename}>
-                  <Check size={15} />
+    <div className="space-y-1">
+      {sessionList.map((session) => (
+        <motion.div
+          className={cn(
+            'group rounded-lg border px-2 py-1.5 transition',
+            selectedSession === session.id
+              ? 'border-primary bg-teal-50'
+              : 'border-border bg-white/80 hover:bg-teal-50',
+          )}
+          key={session.id}
+          whileHover={{ x: 2 }}
+        >
+          {renamingSession === session.id ? (
+            <div className="flex gap-1.5">
+              <input
+                className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-0.5 text-xs font-semibold outline-none focus:border-teal-400"
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter') commitRename() }}
+                value={renameValue}
+              />
+              <IconButton label="Save name" onClick={commitRename}>
+                <Check size={13} />
+              </IconButton>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button className="min-w-0 flex-1 text-left" onClick={() => setSelectedSession(session.id)}>
+                <p className="truncate text-[11px] font-black text-slate-800">{session.title}</p>
+                <p className="text-[10px] font-semibold text-slate-400">{session.updatedAt}</p>
+              </button>
+              <div className="flex shrink-0 opacity-0 transition group-hover:opacity-100">
+                <IconButton label="Rename" onClick={() => startRename(session)}>
+                  <PencilLine size={11} />
+                </IconButton>
+                <IconButton label="Delete" onClick={() => setSessionToDelete(session)}>
+                  <Trash2 size={11} />
                 </IconButton>
               </div>
-            ) : (
-              <div className="flex items-start gap-2">
-                <button className="min-w-0 flex-1 text-left" onClick={() => setSelectedSession(session.id)}>
-                  <p className="truncate text-sm font-black text-slate-800">{session.title}</p>
-                  <p className="text-xs font-semibold text-slate-500">{session.updatedAt}</p>
-                </button>
-                <div className="flex opacity-100 sm:opacity-0 sm:transition sm:group-hover:opacity-100">
-                  <IconButton label="Rename chat session" onClick={() => startRename(session)}>
-                    <PencilLine size={14} />
-                  </IconButton>
-                  <IconButton label="Delete chat session" onClick={() => setSessionToDelete(session)}>
-                    <Trash2 size={14} />
-                  </IconButton>
-                </div>
-              </div>
-            )}
-          </motion.div>
-        ))}
-      </div>
-    </section>
+            </div>
+          )}
+        </motion.div>
+      ))}
+    </div>
   )
 }
 
 function StudioPanel({ activeChunks, highlightedChunk, setActiveCitation }) {
   return (
-    <aside className="notebook-panel notebook-panel-dark flex min-h-[760px] flex-col">
-      <div className="border-b border-border p-4">
+    <aside className="notebook-panel notebook-panel-dark flex h-full flex-col overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-black tracking-tight">Studio</h2>
-            <p className="text-xs font-semibold text-slate-500">Citation previews and suggested follow-up questions.</p>
+            <h2 className="text-base font-black tracking-tight">Studio</h2>
+            <p className="text-[10px] font-semibold text-slate-500">Citation previews and follow-up questions</p>
           </div>
-          <Sparkles className="text-primary" size={18} />
+          <Sparkles className="text-primary" size={16} />
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+
+      {/* Scrollable content — no visible scrollbar */}
+      <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-3 space-y-3">
+
+        {/* Active citation — compact */}
         {highlightedChunk ? (
-          <motion.section className="rounded-xl border border-teal-100 bg-white p-4 shadow-sm" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Active citation</p>
-                <p className="mt-2 text-4xl font-black">{highlightedChunk.id}</p>
-              </div>
-              <span className="relevance-ring text-[10px] font-black text-primary" style={{ '--value': `${highlightedChunk.relevance}%` }}>
+          <motion.section
+            className="rounded-xl border border-teal-100 bg-white p-3 shadow-sm"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Active citation</p>
+            <div className="mt-1.5 flex items-center justify-between gap-2">
+              <p className="text-2xl font-black text-slate-900">{highlightedChunk.id}</p>
+              <span
+                className="relevance-ring text-[10px] font-black text-primary"
+                style={{ '--value': `${highlightedChunk.relevance}%` }}
+              >
                 {highlightedChunk.relevance}%
               </span>
             </div>
-            <p className="mt-4 text-sm font-medium leading-7 text-slate-700">{highlightedChunk.content}</p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs font-black">
-              <span className="rounded-full bg-teal-50 px-3 py-1.5 text-teal-700">Page {highlightedChunk.page}</span>
-              <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">{highlightedChunk.tokenLength} tokens</span>
-              <span className="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">{highlightedChunk.metadata}</span>
+            <p className="mt-2 text-xs font-medium leading-5 text-slate-600 line-clamp-4">{highlightedChunk.content}</p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[10px] font-black text-teal-700">Page {highlightedChunk.page}</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-500">{highlightedChunk.tokenLength} tokens</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-500">{highlightedChunk.metadata}</span>
             </div>
           </motion.section>
         ) : (
-          <div className="rounded-xl border border-dashed border-teal-200 p-5 text-center text-slate-500">
-            <Layers3 className="mx-auto" size={26} />
-            <p className="mt-3 text-sm font-black text-slate-800">No citation selected</p>
-            <p className="mt-1 text-xs font-semibold leading-5">Citations appear after an answer includes indexed sources.</p>
+          <div className="rounded-xl border border-dashed border-teal-200 p-4 text-center text-slate-500">
+            <Layers3 className="mx-auto" size={22} />
+            <p className="mt-2 text-xs font-black text-slate-700">No citation selected</p>
+            <p className="mt-1 text-[10px] font-semibold leading-4">Citations appear after an answer includes indexed sources.</p>
           </div>
         )}
 
-        <section className="mt-5">
-          <p className="mb-3 text-xs font-black uppercase tracking-[0.14em] text-slate-400">Related sources</p>
-          <div className="space-y-2">
+        {/* Related sources — compact, max 3 */}
+        <section>
+          <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Related sources</p>
+          <div className="space-y-1.5">
             {(activeChunks.length ? activeChunks : chunks.slice(0, 3)).map((chunk) => (
               <motion.button
-                className="w-full rounded-xl border border-border bg-white/80 p-3 text-left transition hover:border-teal-200 hover:bg-teal-50"
+                className="w-full rounded-lg border border-border bg-white/80 px-3 py-2 text-left transition hover:border-teal-200 hover:bg-teal-50"
                 key={chunk.id}
                 onClick={() => setActiveCitation(chunk.id)}
-                whileHover={{ x: 4 }}
+                whileHover={{ x: 3 }}
                 whileTap={{ scale: 0.98 }}
               >
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-black text-slate-800">{chunk.id}</p>
-                  <span className="text-xs font-black text-primary">{chunk.relevance}%</span>
+                  <p className="text-xs font-black text-slate-800">{chunk.id}</p>
+                  <span className="text-[10px] font-black text-primary">{chunk.relevance}%</span>
                 </div>
-                <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-slate-500">
-                  {chunk.content}
-                </p>
+                <p className="mt-1 line-clamp-2 text-[10px] font-medium leading-4 text-slate-500">{chunk.content}</p>
               </motion.button>
             ))}
           </div>
         </section>
 
-        <section className="mt-5 rounded-xl border border-border bg-white/80 p-4">
-          <div className="flex items-center gap-2 text-sm font-black">
-            <Search size={15} />
+        {/* Suggested questions — compact */}
+        <section className="rounded-xl border border-border bg-white/80 px-3 py-2.5">
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-black text-slate-700">
+            <Search size={12} />
             Suggested questions
           </div>
-          <div className="mt-3 space-y-2">
+          <div className="space-y-1.5">
             {suggestions.map((suggestion) => (
-              <div className="rounded-lg bg-teal-50 px-3 py-2 text-xs font-semibold text-slate-600" key={suggestion}>
+              <div
+                className="rounded-lg bg-teal-50 px-2.5 py-1.5 text-[10px] font-semibold leading-4 text-slate-600"
+                key={suggestion}
+              >
                 {suggestion}
               </div>
             ))}
