@@ -177,8 +177,8 @@ function DocumentDetailPage() {
     return docChunks.find((chunk) => chunk.id === activeChunk) ?? docChunks[0]
   }, [docChunks, activeChunk])
 
-  const fileUrl = id.startsWith('mock_doc_') ? '#' : getDocumentFileUrl(doc.id)
-  const previewUrl = doc.type === 'PDF' ? fileUrl : (id.startsWith('mock_doc_') ? '#' : getDocumentPreviewUrl(doc.id))
+  const fileUrl = doc ? (id.startsWith('mock_doc_') ? '#' : getDocumentFileUrl(doc.id)) : '#'
+  const previewUrl = doc ? (doc.type === 'PDF' ? fileUrl : (id.startsWith('mock_doc_') ? '#' : getDocumentPreviewUrl(doc.id))) : '#'
 
   async function handleDeleteDocument() {
     setDeleting(true)
