@@ -40,6 +40,7 @@ import {
   getDocumentsByWorkspace,
   uploadDocument,
 } from '../services/documentService.js'
+import { getActiveEmbeddingModel, prepareEmbeddings } from '../services/ragService.js'
 import { cn } from '../utils/cn.js'
 
 const allOption = 'All'
@@ -80,6 +81,7 @@ function LibraryPage() {
   const [viewMode, setViewMode] = useState('bento')
   const [docToDelete, setDocToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [reindexingIds, setReindexingIds] = useState(new Set()) // doc IDs currently re-indexing
 
   // Filters
   const [query, setQuery] = useState('')
@@ -191,6 +193,49 @@ function LibraryPage() {
   // After upload: add docs to list
   function handleUploaded(newDocs) {
     setDocs((curr) => [...newDocs, ...curr])
+  }
+
+  // Re-index: call real API
+  async function handleReindex(doc) {
+    if (reindexingIds.has(doc.id)) return
+    setReindexingIds((prev) => new Set([...prev, doc.id]))
+    setError('')
+
+    try {
+      // Mark as Processing immediately
+      setDocs((curr) =>
+        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Processing' } : d)),
+      )
+
+      const model = await getActiveEmbeddingModel()
+      if (!model) throw new Error('No active embedding model found. Ask admin to configure one.')
+
+      const result = await prepareEmbeddings(doc.id, doc.workspaceId, model.embeddingModelId)
+
+      setDocs((curr) =>
+        curr.map((d) =>
+          d.id === doc.id
+            ? {
+                ...d,
+                status: 'Indexed',
+                chunks: result?.totalChunks ?? result?.createdEmbeddings ?? d.chunks,
+                embeddingModel: model.modelName,
+              }
+            : d,
+        ),
+      )
+    } catch (err) {
+      setError(`Re-index failed for "${doc.displayName}": ${err.message}`)
+      setDocs((curr) =>
+        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Failed' } : d)),
+      )
+    } finally {
+      setReindexingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(doc.id)
+        return next
+      })
+    }
   }
 
   const currentWorkspace = workspaceList.find((w) => w.id === activeWorkspaceId)
@@ -369,14 +414,14 @@ function LibraryPage() {
           title="No matching documents"
         />
       ) : viewMode === 'bento' ? (
-        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} />
+        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
       ) : (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} />
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
       )}
 
       {/* Compact table always under bento */}
       {viewMode === 'bento' && filteredDocs.length > 0 ? (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} compact />
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} compact />
       ) : null}
 
       {/* ── Delete confirm ────────────────────────────────────────────────── */}
@@ -451,6 +496,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
   const [isDragOver, setIsDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [cloudinaryError, setCloudinaryError] = useState(false)
   const fileInputRef = useRef(null)
 
   // When course changes, load its chapters and workspaces
@@ -500,6 +546,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
 
     setUploading(true)
     setError('')
+    setCloudinaryError(false)
 
     const user = getSavedUser()
     const targetWorkspace =
@@ -530,7 +577,12 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
         })
       } catch (err) {
         setProgresses((prev) => ({ ...prev, [file.name]: -1 })) // -1 = error
-        setError(`Failed to upload "${file.name}": ${err.message}`)
+        if (err.code === 'CLOUDINARY_NOT_CONFIGURED') {
+          setCloudinaryError(true)
+          setError(`Cloudinary is not configured on the backend. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.`)
+        } else {
+          setError(`Failed to upload "${file.name}": ${err.message}`)
+        }
       }
     }
 
@@ -539,6 +591,39 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
       onUploaded(uploadedDocs)
       onClose()
     }
+  }
+
+  function handleSimulateUpload() {
+    const user = getSavedUser()
+    const targetWorkspace =
+      workspaces.find((w) => w.id === uploadWorkspaceId) ??
+      courseWorkspaces.find((w) => w.id === uploadWorkspaceId)
+
+    const simulatedDocs = files.map((file) => ({
+      id: `mock_doc_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      name: file.name,
+      displayName: file.name,
+      type: file.name.split('.').pop().toUpperCase(),
+      subject: targetWorkspace?.name ?? 'Course Workspace',
+      chapter: 'General',
+      status: 'Uploaded',
+      chunks: 0,
+      embeddingModel: 'Not embedded',
+      uploadedAt: new Date().toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }),
+      size: 'Stored',
+      pages: 10,
+      workspaceId: uploadWorkspaceId,
+      courseId: uploadCourseId || targetWorkspace?.courseId,
+      chapterId: uploadChapterId || null,
+      preview: 'Simulated successful upload (local mock due to Cloudinary not configured).'
+    }))
+
+    onUploaded(simulatedDocs)
+    onClose()
   }
 
   return (
@@ -699,13 +784,32 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
 
         {/* Error */}
         {error ? (
-          <p className="mb-3 rounded-lg bg-red-50 p-2.5 text-sm font-semibold text-red-600">
-            {error}
-          </p>
+          <div className="mb-3 space-y-2">
+            <p className="rounded-lg bg-red-50 p-2.5 text-sm font-semibold text-red-600">
+              {error}
+            </p>
+            {cloudinaryError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <p className="font-bold mb-1">💡 Hướng dẫn cấu hình Backend:</p>
+                <p className="mb-2">Thêm thông tin Cloudinary vào file <code className="bg-amber-100 px-1 py-0.5 rounded">application.properties</code> của Backend:</p>
+                <pre className="bg-amber-100/50 p-1.5 rounded text-[10px] font-mono whitespace-pre-wrap">
+                  cloudinary.cloud-name=YOUR_CLOUD_NAME{"\n"}
+                  cloudinary.api-key=YOUR_API_KEY{"\n"}
+                  cloudinary.api-secret=YOUR_API_SECRET
+                </pre>
+                <p className="mt-2 font-bold">Hoặc bạn có thể bấm "Simulate Upload (Mock)" bên dưới để kiểm thử giao diện Frontend ngay lập tức.</p>
+              </div>
+            )}
+          </div>
         ) : null}
 
         {/* Actions */}
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-wrap justify-end gap-2">
+          {cloudinaryError && (
+            <Button onClick={handleSimulateUpload} className="bg-amber-500 hover:bg-amber-600 text-white">
+              Simulate Upload (Mock)
+            </Button>
+          )}
           <Button disabled={uploading} onClick={onClose} variant="secondary">
             Cancel
           </Button>
@@ -740,11 +844,12 @@ function StatCard({ icon: Icon, label, value }) {
 
 // ─── DocumentCards ────────────────────────────────────────────────────────────
 
-function DocumentCards({ docs, onDelete }) {
+function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       {docs.map((doc, index) => {
         const colors = fileTypeColors(doc.type)
+        const isReindexing = reindexingIds.has(doc.id)
         return (
           <motion.article
             className="bento-card group p-4"
@@ -809,6 +914,14 @@ function DocumentCards({ docs, onDelete }) {
               >
                 <FileText size={15} />
               </IconButton>
+              <IconButton
+                label={isReindexing ? 'Re-indexing…' : 'Re-index'}
+                disabled={isReindexing}
+                onClick={() => onReindex(doc)}
+                className={isReindexing ? 'animate-spin text-teal-500' : ''}
+              >
+                <RefreshCcw size={15} />
+              </IconButton>
               <IconButton label="Delete" onClick={() => onDelete(doc)}>
                 <Trash2 size={15} />
               </IconButton>
@@ -822,7 +935,7 @@ function DocumentCards({ docs, onDelete }) {
 
 // ─── DocumentTable ────────────────────────────────────────────────────────────
 
-function DocumentTable({ compact = false, docs, onDelete }) {
+function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingIds = new Set() }) {
   return (
     <Panel className={cn('overflow-hidden', compact ? 'hidden xl:block' : '')}>
       <div className="flex items-center justify-between border-b border-border p-4">
@@ -903,6 +1016,14 @@ function DocumentTable({ compact = false, docs, onDelete }) {
                         }
                       >
                         <FileText size={15} />
+                      </IconButton>
+                      <IconButton
+                        label={reindexingIds.has(doc.id) ? 'Re-indexing…' : 'Re-index'}
+                        disabled={reindexingIds.has(doc.id)}
+                        onClick={() => onReindex(doc)}
+                        className={reindexingIds.has(doc.id) ? 'animate-spin text-teal-500' : ''}
+                      >
+                        <RefreshCcw size={15} />
                       </IconButton>
                       <IconButton label="Delete" onClick={() => onDelete(doc)}>
                         <Trash2 size={15} />
