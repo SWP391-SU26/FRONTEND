@@ -49,7 +49,7 @@ function LandingHero() {
           <img
             alt="Dashboard preview for FStu"
             className="h-auto w-full rounded-2xl border border-border object-cover"
-            src="https://placehold.co/1200x720/f6f8fb/0f766e?text=FStu+Dashboard"
+            src="/screenboard.png"
           />
         </div>
       </div>

@@ -1,92 +1,55 @@
-const MOCK_DELAY = 700
-
-const accounts = {
-  'student@fpt.edu.vn': {
-    name: 'FPT Student',
-    password: 'Student123',
-    role: 'student',
-    status: 'active',
-  },
-  'admin@fpt.edu.vn': {
-    name: 'System Admin',
-    password: 'Admin123',
-    role: 'admin',
-    status: 'active',
-  },
-  'locked@fpt.edu.vn': {
-    name: 'Locked Account',
-    password: 'Locked123',
-    role: 'student',
-    status: 'locked',
-  },
-}
-
-const existingEmails = new Set([
-  'student@fpt.edu.vn',
-  'admin@fpt.edu.vn',
-  'locked@fpt.edu.vn',
-  'existing@fpt.edu.vn',
-])
-
-function wait(ms = MOCK_DELAY) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms)
-  })
-}
+import { request } from './httpClient.js'
 
 export async function login({ email, password }) {
-  await wait()
+  const auth = await request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
 
-  const normalizedEmail = email.trim().toLowerCase()
-  const account = accounts[normalizedEmail]
-
-  if (!account) {
-    const error = new Error('No account was found for this email.')
-    error.code = 'EMAIL_NOT_FOUND'
-    throw error
-  }
-
-  if (account.status === 'locked') {
-    const error = new Error('This account is locked. Please contact support.')
-    error.code = 'ACCOUNT_LOCKED'
-    throw error
-  }
-
-  if (account.password !== password) {
-    const error = new Error('Incorrect password. Please try again.')
-    error.code = 'INVALID_PASSWORD'
-    throw error
-  }
-
-  return {
-    accessToken: `mock-token-${account.role}-${Date.now()}`,
-    user: {
-      email: normalizedEmail,
-      name: account.name,
-      role: account.role,
-    },
-  }
+  return toSession(auth)
 }
 
 export async function register(payload) {
-  await wait()
+  const auth = await request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      fullName: payload.fullName,
+      email: payload.email,
+      password: payload.password,
+      roleName: payload.roleName ?? 'USER',
+    }),
+  })
 
-  const normalizedEmail = payload.email.trim().toLowerCase()
+  return toSession(auth)
+}
 
-  if (existingEmails.has(normalizedEmail)) {
-    const error = new Error('This email is already registered.')
-    error.code = 'EMAIL_EXISTS'
-    throw error
-  }
+export function logout(userId) {
+  return request(`/auth/logout/${userId}`, {
+    method: 'POST',
+  })
+}
 
-  return {
-    accessToken: `mock-token-student-${Date.now()}`,
-    user: {
-      email: normalizedEmail,
-      name: payload.fullName.trim(),
-      role: 'student',
-    },
-  }
+export function getUsers() {
+  return request('/auth/users')
+}
+
+export function getUserRoles(userId) {
+  return request(`/auth/users/${userId}/roles`)
+}
+
+export function updateUserRole(userId, roleName) {
+  return request(`/auth/users/${userId}/role`, {
+    method: 'PUT',
+    body: JSON.stringify({ roleName }),
+  })
+}
+
+export function deleteUser(userId) {
+  const requesterId = getSavedUser()?.id
+  const query = requesterId ? `?requesterId=${encodeURIComponent(requesterId)}` : ''
+  return request(`/auth/users/${userId}${query}`, {
+    method: 'DELETE',
+  })
 }
 
 export function saveSession(session) {
@@ -112,3 +75,22 @@ export function isAuthenticated() {
   return Boolean(localStorage.getItem('fstu_access_token') && getSavedUser()?.id)
 }
 
+export function isAdminSession() {
+  return isAuthenticated() && getSavedUser()?.role === 'admin'
+}
+
+function toSession(auth) {
+  const roles = auth.user.roles ?? []
+  const isAdmin = roles.some((role) => role?.toUpperCase() === 'ADMIN')
+
+  return {
+    accessToken: auth.token,
+    user: {
+      id: auth.user.userId,
+      email: auth.user.email,
+      name: auth.user.fullName,
+      role: isAdmin ? 'admin' : 'user',
+      roles,
+    },
+  }
+}

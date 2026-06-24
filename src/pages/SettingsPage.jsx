@@ -10,6 +10,7 @@ import {
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Button from '../components/common/Button.jsx'
+import { getSavedUser, clearSession, logout } from '../services/authService.js'
 
 const tabs = [
   { id: 'profile', label: 'Profile' },
@@ -21,12 +22,13 @@ const tabs = [
 function SettingsPage() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('profile')
+  const user = getSavedUser()
   const [profile, setProfile] = useState({
     className: 'SE18D01',
     department: 'Software Engineering',
-    email: 'student@fpt.edu.vn',
-    fullName: 'FPT Student',
-    role: 'Student',
+    email: user?.email ?? 'student@fpt.edu.vn',
+    fullName: user?.name ?? 'FPT Student',
+    role: user?.role === 'admin' ? 'System Admin' : 'Student',
     studentId: 'SE123456',
   })
   const [chatSettings, setChatSettings] = useState({
@@ -58,10 +60,13 @@ function SettingsPage() {
   }
 
   function handleLogout() {
-    localStorage.removeItem('fstu_access_token')
-    localStorage.removeItem('fstu_user')
+    if (user?.id) {
+      logout(user.id).catch(() => {})
+    }
+    clearSession()
     navigate('/login')
   }
+
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_12%_8%,hsl(var(--primary)/0.12),transparent_30%),linear-gradient(135deg,#ffffff_0%,#f6f8fb_56%,#eef7f5_100%)] p-6 font-body text-foreground">

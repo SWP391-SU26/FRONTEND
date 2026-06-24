@@ -99,8 +99,13 @@ body {
   animation: contour-slide 14s ease-in-out infinite reverse;
 }
 
+html:has(.notebook-grid),
+body:has(.notebook-grid) {
+  overflow: hidden;
+}
+
 .notebook-grid {
-  height: calc(100vh - 72px);
+  height: calc(100vh - 88px);
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(300px, 360px);

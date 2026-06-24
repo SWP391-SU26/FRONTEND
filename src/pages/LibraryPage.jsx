@@ -784,18 +784,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
             <p className="rounded-lg bg-red-50 p-2.5 text-sm font-semibold text-red-600">
               {error}
             </p>
-            {cloudinaryError && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                <p className="font-bold mb-1">💡 Hướng dẫn cấu hình Backend:</p>
-                <p className="mb-2">Thêm thông tin Cloudinary vào file <code className="bg-amber-100 px-1 py-0.5 rounded">application.properties</code> của Backend:</p>
-                <pre className="bg-amber-100/50 p-1.5 rounded text-[10px] font-mono whitespace-pre-wrap">
-                  cloudinary.cloud-name=YOUR_CLOUD_NAME{"\n"}
-                  cloudinary.api-key=YOUR_API_KEY{"\n"}
-                  cloudinary.api-secret=YOUR_API_SECRET
-                </pre>
-                <p className="mt-2 font-bold">Hoặc bạn có thể bấm "Simulate Upload (Mock)" bên dưới để kiểm thử giao diện Frontend ngay lập tức.</p>
-              </div>
-            )}
           </div>
         ) : null}
 
