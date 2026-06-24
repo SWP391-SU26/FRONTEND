@@ -40,6 +40,7 @@ import {
   getDocumentsByWorkspace,
   uploadDocument,
 } from '../services/documentService.js'
+import { getActiveEmbeddingModel, prepareEmbeddings } from '../services/ragService.js'
 import { cn } from '../utils/cn.js'
 
 const allOption = 'All'
@@ -80,6 +81,7 @@ function LibraryPage() {
   const [viewMode, setViewMode] = useState('bento')
   const [docToDelete, setDocToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [reindexingIds, setReindexingIds] = useState(new Set()) // doc IDs currently re-indexing
 
   // Filters
   const [query, setQuery] = useState('')
@@ -191,6 +193,49 @@ function LibraryPage() {
   // After upload: add docs to list
   function handleUploaded(newDocs) {
     setDocs((curr) => [...newDocs, ...curr])
+  }
+
+  // Re-index: call real API
+  async function handleReindex(doc) {
+    if (reindexingIds.has(doc.id)) return
+    setReindexingIds((prev) => new Set([...prev, doc.id]))
+    setError('')
+
+    try {
+      // Mark as Processing immediately
+      setDocs((curr) =>
+        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Processing' } : d)),
+      )
+
+      const model = await getActiveEmbeddingModel()
+      if (!model) throw new Error('No active embedding model found. Ask admin to configure one.')
+
+      const result = await prepareEmbeddings(doc.id, doc.workspaceId, model.embeddingModelId)
+
+      setDocs((curr) =>
+        curr.map((d) =>
+          d.id === doc.id
+            ? {
+                ...d,
+                status: 'Indexed',
+                chunks: result?.totalChunks ?? result?.createdEmbeddings ?? d.chunks,
+                embeddingModel: model.modelName,
+              }
+            : d,
+        ),
+      )
+    } catch (err) {
+      setError(`Re-index failed for "${doc.displayName}": ${err.message}`)
+      setDocs((curr) =>
+        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Failed' } : d)),
+      )
+    } finally {
+      setReindexingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(doc.id)
+        return next
+      })
+    }
   }
 
   const currentWorkspace = workspaceList.find((w) => w.id === activeWorkspaceId)
@@ -369,14 +414,14 @@ function LibraryPage() {
           title="No matching documents"
         />
       ) : viewMode === 'bento' ? (
-        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} />
+        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
       ) : (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} />
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
       )}
 
       {/* Compact table always under bento */}
       {viewMode === 'bento' && filteredDocs.length > 0 ? (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} compact />
+        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} compact />
       ) : null}
 
       {/* ── Delete confirm ────────────────────────────────────────────────── */}
@@ -740,11 +785,12 @@ function StatCard({ icon: Icon, label, value }) {
 
 // ─── DocumentCards ────────────────────────────────────────────────────────────
 
-function DocumentCards({ docs, onDelete }) {
+function DocumentCards({ docs, onDelete, onReindex, reindexingIds }) {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       {docs.map((doc, index) => {
         const colors = fileTypeColors(doc.type)
+        const isReindexing = reindexingIds.has(doc.id)
         return (
           <motion.article
             className="bento-card group p-4"
@@ -809,6 +855,14 @@ function DocumentCards({ docs, onDelete }) {
               >
                 <FileText size={15} />
               </IconButton>
+              <IconButton
+                label={isReindexing ? 'Re-indexing…' : 'Re-index'}
+                disabled={isReindexing}
+                onClick={() => onReindex(doc)}
+                className={isReindexing ? 'animate-spin text-teal-500' : ''}
+              >
+                <RefreshCcw size={15} />
+              </IconButton>
               <IconButton label="Delete" onClick={() => onDelete(doc)}>
                 <Trash2 size={15} />
               </IconButton>
@@ -822,7 +876,7 @@ function DocumentCards({ docs, onDelete }) {
 
 // ─── DocumentTable ────────────────────────────────────────────────────────────
 
-function DocumentTable({ compact = false, docs, onDelete }) {
+function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingIds = new Set() }) {
   return (
     <Panel className={cn('overflow-hidden', compact ? 'hidden xl:block' : '')}>
       <div className="flex items-center justify-between border-b border-border p-4">
@@ -903,6 +957,14 @@ function DocumentTable({ compact = false, docs, onDelete }) {
                         }
                       >
                         <FileText size={15} />
+                      </IconButton>
+                      <IconButton
+                        label={reindexingIds.has(doc.id) ? 'Re-indexing…' : 'Re-index'}
+                        disabled={reindexingIds.has(doc.id)}
+                        onClick={() => onReindex(doc)}
+                        className={reindexingIds.has(doc.id) ? 'animate-spin text-teal-500' : ''}
+                      >
+                        <RefreshCcw size={15} />
                       </IconButton>
                       <IconButton label="Delete" onClick={() => onDelete(doc)}>
                         <Trash2 size={15} />
