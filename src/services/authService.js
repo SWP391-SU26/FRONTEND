@@ -93,22 +93,3 @@ export function saveSession(session) {
   localStorage.setItem('fstu_access_token', session.accessToken)
   localStorage.setItem('fstu_user', JSON.stringify(session.user))
 }
-
-export function clearSession() {
-  localStorage.removeItem('fstu_access_token')
-  localStorage.removeItem('fstu_user')
-}
-
-export function getSavedUser() {
-  try {
-    return JSON.parse(localStorage.getItem('fstu_user') ?? 'null')
-  } catch {
-    clearSession()
-    return null
-  }
-}
-
-export function isAuthenticated() {
-  return Boolean(localStorage.getItem('fstu_access_token') && getSavedUser()?.id)
-}
-
