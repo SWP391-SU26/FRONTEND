@@ -238,8 +238,6 @@ function LibraryPage() {
     }
   }
 
-  const currentWorkspace = workspaceList.find((w) => w.id === activeWorkspaceId)
-
   return (
     <div className="space-y-4">
       {/* ── Hero Header ──────────────────────────────────────────────────── */}
@@ -499,27 +497,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
   const [cloudinaryError, setCloudinaryError] = useState(false)
   const fileInputRef = useRef(null)
 
-  // When course changes, load its chapters and workspaces
-  useEffect(() => {
-    if (!uploadCourseId) {
-      setChapters([])
-      setCourseWorkspaces([])
-      setUploadChapterId('')
-      setUploadWorkspaceId(defaultWorkspaceId)
-      return
-    }
-
-    getChapters(uploadCourseId)
-      .then(setChapters)
-      .catch(() => setChapters([]))
-
-    getWorkspacesByCourse(uploadCourseId)
-      .then((ws) => {
-        setCourseWorkspaces(ws)
-        if (ws.length > 0) setUploadWorkspaceId(ws[0].id)
-      })
-      .catch(() => setCourseWorkspaces([]))
-  }, [uploadCourseId, defaultWorkspaceId])
 
   const acceptFiles = useCallback((incoming) => {
     const accepted = Array.from(incoming).filter((f) =>
@@ -594,7 +571,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
   }
 
   function handleSimulateUpload() {
-    const user = getSavedUser()
     const targetWorkspace =
       workspaces.find((w) => w.id === uploadWorkspaceId) ??
       courseWorkspaces.find((w) => w.id === uploadWorkspaceId)
@@ -693,7 +669,27 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
         <div className="mb-4 grid gap-3 sm:grid-cols-2">
           <SelectField
             label="Course"
-            onChange={(e) => { setUploadCourseId(e.target.value); setUploadChapterId('') }}
+            onChange={(e) => {
+              const cid = e.target.value
+              setUploadCourseId(cid)
+              setUploadChapterId('')
+              if (!cid) {
+                setChapters([])
+                setCourseWorkspaces([])
+                setUploadWorkspaceId(defaultWorkspaceId)
+              } else {
+                getChapters(cid)
+                  .then(setChapters)
+                  .catch(() => setChapters([]))
+
+                getWorkspacesByCourse(cid)
+                  .then((ws) => {
+                    setCourseWorkspaces(ws)
+                    if (ws.length > 0) setUploadWorkspaceId(ws[0].id)
+                  })
+                  .catch(() => setCourseWorkspaces([]))
+              }
+            }}
             value={uploadCourseId}
           >
             <option value="">Select course…</option>

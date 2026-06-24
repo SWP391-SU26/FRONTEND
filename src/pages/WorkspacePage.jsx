@@ -322,6 +322,7 @@ function SourcePanel({
   activeWorkspace,
   fileInputRef,
   handleFiles,
+  // eslint-disable-next-line no-unused-vars
   parallaxY,
   sessionList,
   selectedSession,
