@@ -40,7 +40,8 @@ export function deleteDocument(documentId) {
 }
 
 export function getDocumentFileUrl(documentId) {
-  return `${env.apiBaseUrl}/documents/${documentId}/file`
+  const requesterId = getRequesterId()
+  return `${env.apiBaseUrl}/documents/${documentId}/file?requesterId=${requesterId}`
 }
 
 export function getDocumentPreviewUrl(documentId) {
