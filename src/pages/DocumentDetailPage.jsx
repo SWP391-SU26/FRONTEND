@@ -12,32 +12,156 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { BentoCard, Button, ConfirmModal, EmptyState, Field, Panel, StatusBadge } from '../components/ui.jsx'
-import { chunks, documents } from '../data/mockData.js'
+import {
+  deleteDocument,
+  getDocument,
+  getDocumentChunks,
+} from '../services/documentService.js'
 
 function DocumentDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
-  const [activeChunk, setActiveChunk] = useState('C-1024')
+  const [activeChunk, setActiveChunk] = useState('')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const doc = documents.find((item) => item.id === id)
+  const [deleting, setDeleting] = useState(false)
+
+  const [doc, setDoc] = useState(null)
+  const [rawChunks, setRawChunks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadData() {
+      setLoading(true)
+      setError('')
+      try {
+        if (id.startsWith('mock_doc_')) {
+          const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
+          const found = simulatedList.find((d) => d.id === id)
+          if (!found) throw new Error('Simulated document not found')
+
+          if (isMounted) {
+            setDoc(found)
+            setRawChunks([
+              {
+                id: 'C-MOCK-1',
+                documentId: id,
+                page: 1,
+                tokenLength: 128,
+                metadata: 'fixed chunk size=500',
+                relevance: 95,
+                content: 'Đây là nội dung chunk mô phỏng của tài liệu. Tính năng RAG sẽ đọc phân đoạn này để trả lời câu hỏi.',
+              },
+              {
+                id: 'C-MOCK-2',
+                documentId: id,
+                page: 2,
+                tokenLength: 156,
+                metadata: 'fixed chunk size=500',
+                relevance: 85,
+                content: 'Hệ thống hỗ trợ tải tệp PDF, DOCX, PPTX và TXT. Tài liệu sau khi tải lên sẽ được tự động phân tách thành các chunk và trích xuất vector embeddings.',
+              }
+            ])
+          }
+          return
+        }
+
+        const docData = await getDocument(id)
+        if (!isMounted) return
+        setDoc(docData)
+
+        if (docData.status === 'Indexed') {
+          const chunkList = await getDocumentChunks(id)
+          if (isMounted) {
+            setRawChunks(chunkList)
+            if (chunkList.length > 0) {
+              setActiveChunk(chunkList[0].id)
+            }
+          }
+        } else {
+          if (isMounted) setRawChunks([])
+        }
+      } catch (err) {
+        if (isMounted) setError(err.message)
+      } finally {
+        if (isMounted) setLoading(false)
+      }
+    }
+
+    loadData()
+    return () => {
+      isMounted = false
+    }
+  }, [id])
 
   const docChunks = useMemo(() => {
-    return chunks
-      .filter((chunk) => chunk.documentId === id)
-      .filter((chunk) => {
-        const normalizedQuery = query.trim().toLowerCase()
-        return (
-          !normalizedQuery ||
-          chunk.content.toLowerCase().includes(normalizedQuery) ||
-          chunk.metadata.toLowerCase().includes(normalizedQuery) ||
-          chunk.id.toLowerCase().includes(normalizedQuery)
-        )
-      })
-  }, [id, query])
+    return rawChunks.filter((chunk) => {
+      const normalizedQuery = query.trim().toLowerCase()
+      return (
+        !normalizedQuery ||
+        chunk.content.toLowerCase().includes(normalizedQuery) ||
+        chunk.metadata.toLowerCase().includes(normalizedQuery) ||
+        chunk.id.toLowerCase().includes(normalizedQuery)
+      )
+    })
+  }, [rawChunks, query])
+
+  const selectedChunk = useMemo(() => {
+    return docChunks.find((chunk) => chunk.id === activeChunk) ?? docChunks[0]
+  }, [docChunks, activeChunk])
+
+  async function handleDeleteDocument() {
+    setDeleting(true)
+    try {
+      if (id.startsWith('mock_doc_')) {
+        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
+        const updated = simulatedList.filter((d) => d.id !== id)
+        localStorage.setItem('fstu_simulated_docs', JSON.stringify(updated))
+      } else {
+        await deleteDocument(id)
+      }
+      navigate('/library')
+    } catch (err) {
+      setError(err.message)
+      setShowDeleteModal(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded-2xl border border-teal-100 bg-teal-50/20 text-teal-600">
+        <div className="text-center font-bold">
+          <div className="mb-2 h-8 w-8 animate-spin rounded-full border-4 border-teal-500 border-t-transparent mx-auto"></div>
+          Loading document details…
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <EmptyState
+        action={
+          <Link to="/library">
+            <Button variant="secondary">
+              <ArrowLeft size={16} />
+              Back to Library
+            </Button>
+          </Link>
+        }
+        description={`Error loading document: ${error}`}
+        title="Error loading document"
+      />
+    )
+  }
 
   if (!doc) {
     return (
@@ -50,13 +174,11 @@ function DocumentDetailPage() {
             </Button>
           </Link>
         }
-        description="This document does not exist in the frontend mock data or has been removed from the list."
+        description="This document does not exist in the knowledge base."
         title="Document not found"
       />
     )
   }
-
-  const selectedChunk = docChunks.find((chunk) => chunk.id === activeChunk) ?? docChunks[0]
 
   return (
     <div className="space-y-4">
@@ -234,10 +356,11 @@ function DocumentDetailPage() {
         <ConfirmModal
           actionLabel="Delete document"
           onCancel={() => setShowDeleteModal(false)}
-          onConfirm={() => navigate('/library')}
+          onConfirm={handleDeleteDocument}
           title="Delete document?"
         >
-          This is a frontend simulation. After confirmation, you will be redirected to Library.
+          "{doc.displayName}" will be permanently removed.
+          {deleting ? ' Deleting…' : ''}
         </ConfirmModal>
       ) : null}
     </div>

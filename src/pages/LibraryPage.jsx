@@ -125,6 +125,11 @@ function LibraryPage() {
         }
 
         const documents = await getDocumentsByWorkspace(selectedId)
+        
+        // Load simulated docs from local storage
+        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
+        const filteredSimulated = simulatedList.filter((d) => d.workspaceId === selectedId)
+
         const documentsWithChunks = await Promise.all(
           documents.map(async (doc) => {
             const chunks = await getDocumentChunks(doc.id).catch(() => [])
@@ -140,7 +145,7 @@ function LibraryPage() {
           }),
         )
 
-        if (isMounted) setDocs(documentsWithChunks)
+        if (isMounted) setDocs([...filteredSimulated, ...documentsWithChunks])
       } catch (loadError) {
         if (isMounted) setError(loadError.message)
       } finally {
@@ -180,8 +185,15 @@ function LibraryPage() {
     setDeleting(true)
     setError('')
     try {
-      await deleteDocument(docToDelete.id)
-      setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
+      if (String(docToDelete.id).startsWith('mock_doc_')) {
+        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
+        const updated = simulatedList.filter((d) => d.id !== docToDelete.id)
+        localStorage.setItem('fstu_simulated_docs', JSON.stringify(updated))
+        setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
+      } else {
+        await deleteDocument(docToDelete.id)
+        setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
+      }
       setDocToDelete(null)
     } catch (err) {
       setError(err.message)
@@ -597,6 +609,10 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
       chapterId: uploadChapterId || null,
       preview: 'Simulated successful upload (local mock due to Cloudinary not configured).'
     }))
+
+    // Save to local storage so they can be viewed/persisted
+    const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
+    localStorage.setItem('fstu_simulated_docs', JSON.stringify([...simulatedDocs, ...simulatedList]))
 
     onUploaded(simulatedDocs)
     onClose()
