@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Database,
+  ExternalLink,
   FileText,
   HardDrive,
   Layers3,
@@ -19,6 +20,8 @@ import {
   deleteDocument,
   getDocument,
   getDocumentChunks,
+  getDocumentFileUrl,
+  getDocumentPreviewUrl,
 } from '../services/documentService.js'
 
 function DocumentDetailPage() {
@@ -33,6 +36,7 @@ function DocumentDetailPage() {
   const [rawChunks, setRawChunks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [previewState, setPreviewState] = useState({ loading: true, available: false, message: '' })
 
   useEffect(() => {
     let isMounted = true
@@ -100,6 +104,63 @@ function DocumentDetailPage() {
     }
   }, [id])
 
+  useEffect(() => {
+    if (!doc) return
+
+    let isMounted = true
+
+    async function checkPreview() {
+      if (id.startsWith('mock_doc_')) {
+        setPreviewState({
+          loading: false,
+          available: false,
+          message: 'Preview is not available for simulated mock documents (mock documents do not store real files).',
+        })
+        return
+      }
+
+      if (doc.type === 'PDF') {
+        setPreviewState({ loading: false, available: true, message: '' })
+        return
+      }
+
+      setPreviewState({ loading: true, available: false, message: '' })
+
+      try {
+        const response = await fetch(getDocumentPreviewUrl(doc.id), { method: 'HEAD' })
+        if (!isMounted) return
+
+        if (response.ok) {
+          setPreviewState({ loading: false, available: true, message: '' })
+          return
+        }
+
+        setPreviewState({
+          loading: false,
+          available: false,
+          message:
+            response.status === 501
+              ? 'DOCX/PPTX preview cần cài LibreOffice ở backend để convert sang PDF.'
+              : 'Không tạo được preview hoàn chỉnh cho file này.',
+        })
+      } catch {
+        if (isMounted) {
+          setPreviewState({
+            loading: false,
+            available: false,
+            message: 'Không kết nối được preview API.',
+          })
+        }
+      }
+    }
+
+    checkPreview()
+
+    return () => {
+      isMounted = false
+    }
+  }, [doc, id])
+
   const docChunks = useMemo(() => {
     return rawChunks.filter((chunk) => {
       const normalizedQuery = query.trim().toLowerCase()
@@ -115,6 +176,9 @@ function DocumentDetailPage() {
   const selectedChunk = useMemo(() => {
     return docChunks.find((chunk) => chunk.id === activeChunk) ?? docChunks[0]
   }, [docChunks, activeChunk])
+
+  const fileUrl = id.startsWith('mock_doc_') ? '#' : getDocumentFileUrl(doc.id)
+  const previewUrl = doc.type === 'PDF' ? fileUrl : (id.startsWith('mock_doc_') ? '#' : getDocumentPreviewUrl(doc.id))
 
   async function handleDeleteDocument() {
     setDeleting(true)
@@ -208,16 +272,72 @@ function DocumentDetailPage() {
               {doc.preview}
             </p>
           </div>
-          <Button onClick={() => setShowDeleteModal(true)} variant="danger">
-            <Trash2 size={16} />
-            Delete document
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {!id.startsWith('mock_doc_') && (
+              <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} variant="secondary">
+                <ExternalLink size={16} />
+                Open original file
+              </Button>
+            )}
+            <Button onClick={() => setShowDeleteModal(true)} variant="danger">
+              <Trash2 size={16} />
+              Delete document
+            </Button>
+          </div>
         </div>
         <div className="relative mt-5 grid gap-3 sm:grid-cols-3">
           <StatTile label="Pages" value={doc.pages} />
           <StatTile label="Chunks" value={doc.chunks} />
           <StatTile label="Relevance" value={doc.relevance ? `${doc.relevance}%` : 'sync'} />
         </div>
+      </Panel>
+
+      <Panel className="overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
+          <div>
+            <h2 className="text-xl font-black tracking-tight">Original file</h2>
+            <p className="text-sm font-semibold text-slate-500">
+              Preview renders the uploaded layout, images, and pages inside this workspace.
+            </p>
+          </div>
+          {!id.startsWith('mock_doc_') && (
+            <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} size="sm" type="button" variant="secondary">
+              <ExternalLink size={16} />
+              Open
+            </Button>
+          )}
+        </div>
+        {previewState.loading ? (
+          <div className="grid min-h-[360px] place-items-center p-6 text-center">
+            <p className="text-sm font-semibold text-slate-600">Preparing document preview...</p>
+          </div>
+        ) : previewState.available ? (
+          <iframe
+            className="h-[72vh] min-h-[520px] w-full bg-slate-100"
+            src={previewUrl}
+            title={`Original file preview for ${doc.displayName}`}
+          />
+        ) : (
+          <div className="grid min-h-[260px] place-items-center p-6 text-center">
+            <div>
+              <div className="mx-auto grid size-14 place-items-center rounded-xl bg-teal-50 text-primary">
+                <FileText size={24} />
+              </div>
+              <h3 className="mt-4 text-lg font-black text-slate-950">{doc.name || doc.displayName}</h3>
+              <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-slate-500">
+                {previewState.message}
+              </p>
+              {!id.startsWith('mock_doc_') && (
+                <div className="mt-5 flex justify-center gap-2">
+                  <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} type="button">
+                    <ExternalLink size={16} />
+                    Open original file
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Panel>
 
       <section className="studio-grid">
