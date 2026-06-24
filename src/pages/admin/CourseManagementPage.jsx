@@ -44,7 +44,7 @@ export default function CourseManagementPage() {
         if (!active) return
         setCourses(items)
         if (items[0]) setStructureLoading(true)
-        setSelectedId((current) => current || items[0]?.courseId || '')
+        setSelectedId((current) => current || items[0]?.id || '')
       })
       .catch((requestError) => active && setError(requestError.message))
       .finally(() => active && setLoading(false))
@@ -70,7 +70,7 @@ export default function CourseManagementPage() {
     }
   }, [selectedId])
 
-  const selectedCourse = courses.find((course) => course.courseId === selectedId)
+  const selectedCourse = courses.find((course) => course.id === selectedId)
 
   function openDialog(type) {
     setForm(blankForm)
@@ -92,7 +92,7 @@ export default function CourseManagementPage() {
         })
         setCourses((current) => [created, ...current])
         setStructureLoading(true)
-        setSelectedId(created.courseId)
+        setSelectedId(created.id)
       } else if (dialog === 'chapter') {
         const created = await createChapter(selectedId, {
           chapterTitle: form.chapterTitle.trim(),
@@ -148,18 +148,18 @@ export default function CourseManagementPage() {
                 <button
                   className={cn(
                     'w-full rounded-lg border p-3 text-left transition',
-                    selectedId === course.courseId
+                    selectedId === course.id
                       ? 'border-teal-300 bg-teal-50 shadow-sm'
                       : 'border-slate-200 bg-white/80 hover:border-teal-200',
                   )}
-                  key={course.courseId}
-                  onClick={() => { setStructureLoading(true); setError(''); setSelectedId(course.courseId) }}
+                  key={course.id}
+                  onClick={() => { setStructureLoading(true); setError(''); setSelectedId(course.id) }}
                   type="button"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-black text-slate-950">{course.courseName}</p>
-                      <p className="mt-1 text-xs font-black uppercase text-slate-500">{course.courseCode}</p>
+                      <p className="truncate text-sm font-black text-slate-950">{course.name}</p>
+                      <p className="mt-1 text-xs font-black uppercase text-slate-500">{course.code}</p>
                     </div>
                     <StatusBadge status={course.isActive ? 'Indexed' : 'Uploaded'} />
                   </div>
@@ -175,7 +175,7 @@ export default function CourseManagementPage() {
             <Panel className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
                 <p className="text-xs font-black uppercase text-slate-500">Selected course</p>
-                <h2 className="mt-1 text-xl font-black">{selectedCourse?.courseName}</h2>
+                <h2 className="mt-1 text-xl font-black">{selectedCourse?.name}</h2>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => openDialog('chapter')} variant="secondary"><Plus size={16} />Chapter</Button>
@@ -189,8 +189,8 @@ export default function CourseManagementPage() {
                   empty="No chapters in this course."
                   icon={Layers3}
                   items={chapters.map((chapter) => ({
-                    id: chapter.chapterId,
-                    title: chapter.chapterTitle,
+                    id: chapter.id,
+                    title: chapter.title,
                     meta: `Order ${chapter.orderIndex}`,
                     description: chapter.description,
                   }))}
@@ -200,8 +200,8 @@ export default function CourseManagementPage() {
                   empty="No workspaces in this course."
                   icon={Boxes}
                   items={workspaces.map((workspace) => ({
-                    id: workspace.workspaceId,
-                    title: workspace.workspaceTitle,
+                    id: workspace.id,
+                    title: workspace.name,
                     meta: workspace.visibility,
                     description: workspace.description,
                   }))}
