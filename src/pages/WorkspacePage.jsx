@@ -61,7 +61,7 @@ function WorkspacePage() {
       .then((items) => {
         if (!active) return
         setWorkspaces(items)
-        setActiveWorkspace((current) => current || items[0]?.workspaceId || '')
+        setActiveWorkspace((current) => current || items[0]?.id || '')
         if (!items.length) setLoading(false)
       })
       .catch((requestError) => {
@@ -107,7 +107,7 @@ function WorkspacePage() {
     }
   }, [activeWorkspace, reloadKey, user?.id])
 
-  const activeWorkspaceData = workspaces.find((item) => item.workspaceId === activeWorkspace)
+  const activeWorkspaceData = workspaces.find((item) => item.id === activeWorkspace)
   const indexedDocuments = useMemo(
     () => documents.filter((document) => document.status === 'Indexed'),
     [documents],
@@ -156,7 +156,7 @@ function WorkspacePage() {
 
   function openNote(message) {
     setNoteDraft({
-      title: `Chat note - ${activeWorkspaceData?.workspaceTitle || 'Workspace'}`,
+      title: `Chat note - ${activeWorkspaceData?.name || 'Workspace'}`,
       content: message.content,
     })
   }
@@ -214,15 +214,15 @@ function WorkspacePage() {
               <button
                 className={cn(
                   'w-full rounded-lg border p-3 text-left transition',
-                  workspace.workspaceId === activeWorkspace
+                  workspace.id === activeWorkspace
                     ? 'border-teal-300 bg-teal-50'
                     : 'border-slate-200 bg-white/80 hover:border-teal-200',
                 )}
-                key={workspace.workspaceId}
-                onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setActiveWorkspace(workspace.workspaceId) }}
+                key={workspace.id}
+                onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setActiveWorkspace(workspace.id) }}
                 type="button"
               >
-                <p className="truncate text-sm font-black">{workspace.workspaceTitle}</p>
+                <p className="truncate text-sm font-black">{workspace.name}</p>
                 <p className="mt-1 text-xs font-semibold text-slate-500">{workspace.visibility}</p>
               </button>
             ))}
@@ -249,7 +249,7 @@ function WorkspacePage() {
           <div className="flex items-center justify-between border-b border-slate-200 p-4">
             <div>
               <p className="text-xs font-black uppercase text-slate-500">Active session</p>
-              <h2 className="mt-1 text-base font-black">{activeWorkspaceData?.workspaceTitle || 'Select a workspace'}</h2>
+              <h2 className="mt-1 text-base font-black">{activeWorkspaceData?.name || 'Select a workspace'}</h2>
             </div>
             {session ? <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">Connected</span> : null}
           </div>
