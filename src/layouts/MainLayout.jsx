@@ -5,10 +5,11 @@ import {
   MessageSquareText,
   ShieldCheck,
   Settings2,
+  LogOut,
 } from 'lucide-react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
-import { isAdminSession } from '../services/authService.js'
+import { getSavedUser, clearSession, logout, isAdminSession } from '../services/authService.js'
 
 const navItems = [
   { href: '/workspace', label: 'AI Chat', icon: MessageSquareText, end: true },
@@ -16,6 +17,17 @@ const navItems = [
 ]
 
 function MainLayout() {
+  const navigate = useNavigate()
+  const user = getSavedUser()
+
+  function handleLogout() {
+    if (user?.id) {
+      logout(user.id).catch(() => {})
+    }
+    clearSession()
+    navigate('/login')
+  }
+
   return (
     <div className="app-ambient min-h-screen text-slate-950">
       <div className="ambient-lines" />
@@ -101,6 +113,16 @@ function MainLayout() {
               whileTap={{ scale: 0.96 }}
             >
               FS
+            </motion.button>
+            <motion.button
+              aria-label="Log out"
+              className="nav-pill relative grid size-10 place-items-center text-slate-600 transition hover:text-red-650"
+              onClick={handleLogout}
+              title="Log out"
+              whileHover={{ y: -2 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <LogOut size={16} />
             </motion.button>
           </div>
         </div>

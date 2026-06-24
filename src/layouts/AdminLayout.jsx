@@ -11,13 +11,14 @@ import {
   Gauge,
   Home,
   ListTree,
+  LogOut,
   Search,
   Settings,
   Users,
 } from 'lucide-react'
-import { Navigate, NavLink, Outlet } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
-import { isAdminSession } from '../services/authService.js'
+import { getSavedUser, clearSession, logout, isAdminSession } from '../services/authService.js'
 
 const adminNav = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
@@ -33,6 +34,17 @@ const adminNav = [
 ]
 
 function AdminLayout() {
+  const navigate = useNavigate()
+  const user = getSavedUser()
+
+  function handleLogout() {
+    if (user?.id) {
+      logout(user.id).catch(() => {})
+    }
+    clearSession()
+    navigate('/login')
+  }
+
   if (!isAdminSession()) {
     return <Navigate replace to="/workspace" />
   }
@@ -109,6 +121,14 @@ function AdminLayout() {
               >
                 <Home size={16} />
               </NavLink>
+              <button
+                className="grid size-10 place-items-center rounded-xl border border-border bg-white/90 text-slate-600 shadow-sm transition hover:bg-red-50 hover:text-red-650"
+                onClick={handleLogout}
+                title="Log out"
+                type="button"
+              >
+                <LogOut size={16} />
+              </button>
               <div className="grid size-10 place-items-center rounded-full bg-primary text-xs font-black text-white">
                 AD
               </div>
