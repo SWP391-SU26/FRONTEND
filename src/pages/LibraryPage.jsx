@@ -617,7 +617,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
     onUploaded(simulatedDocs)
     onClose()
   }
-
   return (
     <motion.div
       className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm"

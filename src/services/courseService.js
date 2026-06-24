@@ -24,6 +24,33 @@ export async function getWorkspacesByCourse(courseId) {
   return list.map(toUiWorkspace)
 }
 
+export async function createCourse(payload) {
+  const result = await request('/courses', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const course = result?.data ?? result
+  return toUiCourse(course)
+}
+
+export async function createChapter(courseId, payload) {
+  const result = await request(`/courses/${courseId}/chapters`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const chapter = result?.data ?? result
+  return toUiChapter(chapter)
+}
+
+export async function createWorkspace(courseId, payload) {
+  const result = await request(`/courses/${courseId}/workspaces`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const workspace = result?.data ?? result
+  return toUiWorkspace(workspace)
+}
+
 function toUiCourse(course) {
   return {
     id: course.courseId,

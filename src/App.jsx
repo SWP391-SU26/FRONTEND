@@ -13,7 +13,6 @@ import {
   AdminLogsPage,
   AdminModelSettingsPage,
   AdminResearchDashboardPage,
-  AdminSubjectsPage,
   AdminTestSetPage,
   AdminUsersPage,
 } from './pages/admin/AdminPages.jsx'
@@ -21,6 +20,7 @@ import DocumentDetailPage from './pages/DocumentDetailPage.jsx'
 import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import WorkspacePage from './pages/WorkspacePage.jsx'
+import CourseManagementPage from './pages/admin/CourseManagementPage.jsx'
 
 function App() {
   return (
@@ -35,7 +35,8 @@ function App() {
         <Route path="dashboard" element={<AdminDashboardPage />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<AdminDocumentsPage />} />
-        <Route path="subjects" element={<AdminSubjectsPage />} />
+        <Route path="courses" element={<CourseManagementPage />} />
+        <Route path="subjects" element={<Navigate replace to="/admin/courses" />} />
         <Route path="indexing" element={<AdminIndexingPage />} />
         <Route path="model-settings" element={<AdminModelSettingsPage />} />
         <Route path="test-set" element={<AdminTestSetPage />} />

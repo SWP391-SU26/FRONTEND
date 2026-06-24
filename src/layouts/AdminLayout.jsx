@@ -15,14 +15,15 @@ import {
   Settings,
   Users,
 } from 'lucide-react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Navigate, NavLink, Outlet } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
+import { isAdminSession } from '../services/authService.js'
 
 const adminNav = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/documents', label: 'Documents', icon: FileText },
-  { href: '/admin/subjects', label: 'Subjects', icon: BookOpen },
+  { href: '/admin/courses', label: 'Courses', icon: BookOpen },
   { href: '/admin/indexing', label: 'Indexing', icon: Database },
   { href: '/admin/model-settings', label: 'Model Settings', icon: Settings },
   { href: '/admin/test-set', label: 'Test Set', icon: ClipboardList },
@@ -32,6 +33,10 @@ const adminNav = [
 ]
 
 function AdminLayout() {
+  if (!isAdminSession()) {
+    return <Navigate replace to="/workspace" />
+  }
+
   return (
     <div className="app-ambient min-h-screen text-slate-950">
       <div className="ambient-lines" />

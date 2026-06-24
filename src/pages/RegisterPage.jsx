@@ -15,7 +15,6 @@ const benefits = [
 const initialForm = {
   fullName: '',
   email: '',
-  studentId: '',
   password: '',
   confirmPassword: '',
 }
@@ -144,16 +143,6 @@ function RegisterPage() {
             placeholder="student@fpt.edu.vn"
             type="email"
             value={form.email}
-          />
-        </div>
-
-        <div className="animate-auth-field animation-delay-450">
-          <AuthInput
-            label="Student ID"
-            name="studentId"
-            onChange={handleChange}
-            placeholder="SE123456"
-            value={form.studentId}
           />
         </div>
 

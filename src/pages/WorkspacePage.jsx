@@ -1,166 +1,151 @@
-import { AnimatePresence, motion, useScroll, useTransform } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
+  AlertTriangle,
   Bot,
+  BookOpenCheck,
   Check,
   Clipboard,
   FileText,
-  History,
-  Info,
-  Layers3,
   Loader2,
-  MessageSquarePlus,
-  PencilLine,
+NotebookPen,
   RefreshCcw,
-  Search,
+  Save,
   Send,
-  Sparkles,
-  ThumbsDown,
-  ThumbsUp,
-  Trash2,
-  Upload,
   UserRound,
   X,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
-import { Button, ConfirmModal, IconButton, StatusBadge } from '../components/ui.jsx'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, IconButton, Panel, StatusBadge } from '../components/ui.jsx'
+import { getSavedUser } from '../services/authService.js'
 import {
-  chatSessions,
-  chunks,
-  documents,
-  initialMessages,
-  uploadSteps,
-  workspaces,
-} from '../data/mockData.js'
+  askQuestion,
+  createOrGetSession,
+  getCitations,
+  getHistory,
+  getNotes,
+  saveNote,
+} from '../services/chatService.js'
+import { getWorkspaces } from '../services/courseService.js'
+import { getDocumentsByWorkspace } from '../services/documentService.js'
 import { cn } from '../utils/cn.js'
 
 const suggestions = [
-  'Summarize chapter 1 in five key points',
-  'Compare agents and knowledge bases',
-  'Create six review questions with answers',
+  'Summarize the key ideas in this workspace',
+  'Explain the most important concept with citations',
+  'Create five review questions from the documents',
 ]
 
 function WorkspacePage() {
-  const { scrollY } = useScroll()
-  const parallaxY = useTransform(scrollY, [0, 520], [0, -28])
-  const [activeWorkspace, setActiveWorkspace] = useState(workspaces[0].id)
-  const [sessions, setSessions] = useState(chatSessions)
-  const [selectedSession, setSelectedSession] = useState(chatSessions[0].id)
-  const [messages, setMessages] = useState(initialMessages)
+  const user = getSavedUser()
+  const [workspaces, setWorkspaces] = useState([])
+  const [activeWorkspace, setActiveWorkspace] = useState('')
+  const [documents, setDocuments] = useState([])
+  const [session, setSession] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [notes, setNotes] = useState([])
   const [input, setInput] = useState('')
-  const [activeCitation, setActiveCitation] = useState('C-1024')
+  const [activeCitation, setActiveCitation] = useState(null)
+  const [loading, setLoading] = useState(Boolean(user?.id))
   const [isAnswering, setIsAnswering] = useState(false)
-  const [warning, setWarning] = useState('')
-  const [feedback, setFeedback] = useState({})
+  const [error, setError] = useState(user?.id ? '' : 'Sign in with a backend account before opening a chat workspace.')
   const [copiedId, setCopiedId] = useState('')
-  const [uploadJobs, setUploadJobs] = useState([])
-  const [sessionToDelete, setSessionToDelete] = useState(null)
-  const [renamingSession, setRenamingSession] = useState('')
-  const [renameValue, setRenameValue] = useState('')
-  const fileInputRef = useRef(null)
+  const [noteDraft, setNoteDraft] = useState(null)
+  const [savingNote, setSavingNote] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
-  const workspaceDocs = useMemo(
-    () => documents.filter((doc) => doc.workspaceId === activeWorkspace),
-    [activeWorkspace],
-  )
-  const indexedDocs = workspaceDocs.filter((doc) => doc.status === 'Indexed')
-  const sessionList = sessions.filter((session) => session.workspaceId === activeWorkspace)
-  const activeChunks = chunks.filter((chunk) =>
-    messages.some((message) => message.citations?.includes(chunk.id)),
-  )
-  const highlightedChunk =
-    chunks.find((chunk) => chunk.id === activeCitation) ?? activeChunks[0]
-  const canChat = indexedDocs.length > 0 && !isAnswering
+  useEffect(() => {
+    let active = true
+    if (!user?.id) return undefined
 
-  function handleNewSession() {
-    const nextSession = {
-      id: `session-${Date.now()}`,
-      title: 'New chat session',
-      updatedAt: 'Just now',
-      workspaceId: activeWorkspace,
+    getWorkspaces()
+      .then((items) => {
+        if (!active) return
+        setWorkspaces(items)
+        setActiveWorkspace((current) => current || items[0]?.workspaceId || '')
+        if (!items.length) setLoading(false)
+      })
+      .catch((requestError) => {
+        if (active) {
+          setError(requestError.message)
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
     }
-    setSessions((current) => [nextSession, ...current])
-    setSelectedSession(nextSession.id)
-    setMessages([
-      {
-        id: `m-${Date.now()}`,
-        role: 'assistant',
-        content:
-          'Your new session is ready. I will answer only from the indexed documents in this workspace.',
-        citations: [],
-      },
-    ])
-    setActiveCitation('')
-    setWarning('')
-  }
+  }, [user?.id])
 
-  function handleSubmit(event) {
+  useEffect(() => {
+    if (!activeWorkspace || !user?.id) return undefined
+    let active = true
+
+    Promise.all([
+      getDocumentsByWorkspace(activeWorkspace),
+      getNotes(activeWorkspace),
+      createOrGetSession(user.id, activeWorkspace),
+    ])
+      .then(async ([nextDocuments, nextNotes, nextSession]) => {
+        const history = await getHistory(nextSession.chatSessionId)
+        const mappedHistory = await Promise.all(
+          history.map(async (message) => {
+            const isAssistant = message.senderRole?.toLowerCase() === 'assistant'
+            const citations = isAssistant ? await getCitations(message.messageId).catch(() => []) : []
+            return toUiMessage(message, citations)
+          }),
+        )
+        if (!active) return
+        setDocuments(nextDocuments)
+        setNotes(nextNotes)
+        setSession(nextSession)
+        setMessages(mappedHistory)
+      })
+      .catch((requestError) => active && setError(requestError.message))
+      .finally(() => active && setLoading(false))
+
+    return () => {
+      active = false
+    }
+  }, [activeWorkspace, reloadKey, user?.id])
+
+  const activeWorkspaceData = workspaces.find((item) => item.workspaceId === activeWorkspace)
+  const indexedDocuments = useMemo(
+    () => documents.filter((document) => document.status === 'Indexed'),
+    [documents],
+  )
+  const canChat = Boolean(session && indexedDocuments.length && !isAnswering)
+
+  async function handleSubmit(event) {
     event.preventDefault()
     const question = input.trim()
-
-    if (!question) {
-      setWarning('Enter a question before sending.')
-      return
-    }
-    if (workspaceDocs.length === 0) {
-      setWarning('This workspace has no documents. Upload a file first.')
-      return
-    }
-    if (indexedDocs.length === 0) {
-      setWarning('Documents are still processing. Wait for an Indexed source before chatting.')
+    if (!question || !session) return
+    if (!indexedDocuments.length) {
+      setError('This workspace has no processed document available for RAG.')
       return
     }
 
+    const optimisticId = `pending-${Date.now()}`
     setInput('')
-    setWarning('')
-    setMessages((current) => [
-      ...current,
-      { id: `m-user-${Date.now()}`, role: 'user', content: question },
-    ])
+    setError('')
     setIsAnswering(true)
+    setMessages((current) => [...current, { id: optimisticId, role: 'user', content: question }])
 
-    window.setTimeout(() => {
-      const lowerQuestion = question.toLowerCase()
-      const noSource =
-        lowerQuestion.includes('weather') || lowerQuestion.includes('outside the sources')
-      setMessages((current) => [
-        ...current,
-        {
-          id: `m-ai-${Date.now()}`,
-          role: 'assistant',
-          content: noSource
-            ? 'I could not find a relevant source in the indexed documents. To stay grounded in the material, I will not infer beyond the available sources.'
-            : 'Based on the relevant source chunks, this concept should be interpreted through its context, evaluation goal, and supporting knowledge. Open a citation to review the exact chunk.',
-          citations: noSource ? [] : ['C-1024', 'C-1031'],
-          confidence: noSource ? 'low' : 'good',
-        },
-      ])
-      setActiveCitation(noSource ? '' : 'C-1024')
-      setWarning(noSource ? 'No relevant source was found in the indexed documents.' : '')
+    try {
+      const response = await askQuestion(session.chatSessionId, question)
+      const answer = {
+        id: response.assistantMessageId,
+        role: 'assistant',
+        content: response.answer,
+        citations: response.citations ?? [],
+      }
+      setMessages((current) => [...current, answer])
+      setActiveCitation(answer.citations[0] ?? null)
+    } catch (requestError) {
+      setMessages((current) => current.filter((message) => message.id !== optimisticId))
+      setInput(question)
+      setError(`${requestError.message} Your question is ready to retry.`)
+    } finally {
       setIsAnswering(false)
-    }, 850)
-  }
-
-  function handleFiles(files) {
-    Array.from(files)
-      .filter((file) => /\.(pdf|docx|pptx|ppt)$/i.test(file.name))
-      .forEach((file) => {
-        const jobId = `${file.name}-${Date.now()}`
-        setUploadJobs((current) => [
-          { id: jobId, name: file.name, progress: 10, step: uploadSteps[0] },
-          ...current,
-        ])
-        uploadSteps.forEach((step, index) => {
-          window.setTimeout(() => {
-            setUploadJobs((current) =>
-              current.map((item) =>
-                item.id === jobId
-                  ? { ...item, progress: Math.min(100, 18 + index * 21), step }
-                  : item,
-              ),
-            )
-          }, 420 * (index + 1))
-        })
-      })
+    }
   }
 
   function copyAnswer(message) {
@@ -169,578 +154,245 @@ function WorkspacePage() {
     window.setTimeout(() => setCopiedId(''), 1200)
   }
 
-  function startRename(session) {
-    setRenamingSession(session.id)
-    setRenameValue(session.title)
+  function openNote(message) {
+    setNoteDraft({
+      title: `Chat note - ${activeWorkspaceData?.workspaceTitle || 'Workspace'}`,
+      content: message.content,
+    })
   }
 
-  function commitRename() {
-    setSessions((current) =>
-      current.map((session) =>
-        session.id === renamingSession
-          ? { ...session, title: renameValue || session.title }
-          : session,
-      ),
-    )
-    setRenamingSession('')
-    setRenameValue('')
+  async function handleSaveNote(event) {
+    event.preventDefault()
+    setSavingNote(true)
+    setError('')
+    try {
+      const created = await saveNote({
+        userId: user.id,
+        workspaceId: activeWorkspace,
+        noteTitle: noteDraft.title.trim(),
+        noteContent: noteDraft.content.trim(),
+      })
+      setNotes((current) => [created, ...current])
+      setNoteDraft(null)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setSavingNote(false)
+    }
   }
 
   return (
-    <div className="notebook-grid">
-      <SourcePanel
-        activeWorkspace={activeWorkspace}
-        fileInputRef={fileInputRef}
-        handleFiles={handleFiles}
-        parallaxY={parallaxY}
-        sessionList={sessionList}
-        selectedSession={selectedSession}
-        setActiveWorkspace={setActiveWorkspace}
-        setSelectedSession={setSelectedSession}
-        setSessionToDelete={setSessionToDelete}
-        startRename={startRename}
-        commitRename={commitRename}
-        renamingSession={renamingSession}
-        renameValue={renameValue}
-        setRenameValue={setRenameValue}
-        uploadJobs={uploadJobs}
-        workspaceDocs={workspaceDocs}
-      />
-
-      <main className="notebook-panel flex h-full flex-col overflow-hidden">
-        <div className="source-glow" />
-        <div className="relative flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+    <div className="space-y-4">
+      <Panel className="overflow-hidden p-5">
+        <div className="pointer-events-none absolute inset-0 opacity-55"><div className="abstract-canvas" /></div>
+        <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-950">
-              AI Study Workspace
-            </h1>
-            <p className="text-sm font-semibold text-slate-500">
-              Chat with indexed sources, preserve context, and verify every citation.
+            <p className="text-xs font-black uppercase text-teal-700">Source-grounded study</p>
+            <h1 className="mt-2 text-3xl font-black text-slate-950 sm:text-4xl">AI Chat Workspace</h1>
+            <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
+              Ask questions from processed course documents and keep useful answers as learning notes.
             </p>
           </div>
-          <Button onClick={handleNewSession}>
-            <MessageSquarePlus size={16} />
-            New chat
-          </Button>
+          <Button onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setReloadKey((value) => value + 1) }} variant="secondary"><RefreshCcw size={16} />Refresh</Button>
         </div>
+      </Panel>
 
-        {warning ? (
-          <motion.div
-            className="mx-4 mt-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800"
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <Info className="mt-0.5 shrink-0" size={16} />
-            <span>{warning}</span>
-            <button aria-label="Close warning" className="ml-auto" onClick={() => setWarning('')}>
-              <X size={15} />
-            </button>
-          </motion.div>
-        ) : null}
+      <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold leading-5 text-amber-800">
+        <AlertTriangle className="mt-0.5 shrink-0" size={16} />
+        Development warning: the current backend AI integration does not yet guarantee workspace-isolated retrieval.
+      </div>
+      {error ? <ErrorBanner message={error} /> : null}
 
-        <div className="card-rail relative min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {messages.map((message) => (
-            <ChatMessage
-              activeCitation={activeCitation}
-              copiedId={copiedId}
-              feedback={feedback}
-              key={message.id}
-              message={message}
-              onCitation={setActiveCitation}
-              onCopy={copyAnswer}
-              onFeedback={(value) =>
-                setFeedback((current) => ({ ...current, [message.id]: value }))
-              }
-              onRegenerate={() => setWarning('Answer regeneration simulated.')}
-            />
-          ))}
-          {isAnswering ? (
-            <motion.div className="flex items-center gap-3 text-sm font-black text-slate-500" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <Loader2 className="animate-spin text-primary" size={18} />
-              AI is reading sources and drafting an answer...
-            </motion.div>
-          ) : null}
-        </div>
-
-        <div className="border-t border-border bg-white/70 p-4">
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1 hide-scrollbar">
-            {suggestions.map((suggestion) => (
-              <motion.button
-                className="shrink-0 rounded-full border border-border bg-white/90 px-3 py-2 text-xs font-black text-slate-600 shadow-sm hover:border-teal-200 hover:bg-teal-50 hover:text-primary"
-                key={suggestion}
-                onClick={() => setInput(suggestion)}
-                whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.98 }}
+      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
+        <Panel className="p-4 xl:min-h-[720px]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-black">Workspaces</h2>
+            <BookOpenCheck className="text-primary" size={18} />
+          </div>
+          <div className="mt-4 space-y-2">
+            {workspaces.map((workspace) => (
+              <button
+                className={cn(
+                  'w-full rounded-lg border p-3 text-left transition',
+                  workspace.workspaceId === activeWorkspace
+                    ? 'border-teal-300 bg-teal-50'
+                    : 'border-slate-200 bg-white/80 hover:border-teal-200',
+                )}
+                key={workspace.workspaceId}
+                onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setActiveWorkspace(workspace.workspaceId) }}
+                type="button"
               >
-                {suggestion}
-              </motion.button>
-            ))}
-          </div>
-          <form
-            className={cn(
-              'flex items-end gap-3 rounded-xl border bg-white/90 p-2 shadow-inner transition focus-within:ring-4',
-              canChat
-                ? 'border-border focus-within:ring-teal-100'
-                : 'border-amber-200 focus-within:ring-amber-100',
-            )}
-            onSubmit={handleSubmit}
-          >
-            <textarea
-              className="max-h-36 min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
-              disabled={!canChat}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={canChat ? 'Ask a question about the uploaded sources...' : 'Wait for an Indexed document to start chatting'}
-              value={input}
-            />
-            <Button aria-label="Send question" disabled={!canChat} size="icon" type="submit">
-              <Send size={17} />
-            </Button>
-          </form>
-        </div>
-      </main>
-
-      <StudioPanel activeChunks={activeChunks} highlightedChunk={highlightedChunk} setActiveCitation={setActiveCitation} />
-
-      {sessionToDelete ? (
-        <ConfirmModal
-          actionLabel="Delete session"
-          onCancel={() => setSessionToDelete(null)}
-          onConfirm={() => {
-            setSessions((current) => current.filter((session) => session.id !== sessionToDelete.id))
-            setSessionToDelete(null)
-          }}
-          title="Delete chat session?"
-        >
-          "{sessionToDelete.title}" will be removed from the local chat history.
-        </ConfirmModal>
-      ) : null}
-    </div>
-  )
-}
-
-function SourcePanel({
-  activeWorkspace,
-  fileInputRef,
-  handleFiles,
-  // eslint-disable-next-line no-unused-vars
-  parallaxY,
-  sessionList,
-  selectedSession,
-  setActiveWorkspace,
-  setSelectedSession,
-  setSessionToDelete,
-  startRename,
-  commitRename,
-  renamingSession,
-  renameValue,
-  setRenameValue,
-  uploadJobs,
-  workspaceDocs,
-}) {
-  return (
-    <aside className="notebook-panel flex h-full flex-col overflow-hidden">
-      <div className="source-glow" />
-
-      {/* Workspace selector — fixed, compact horizontal pills */}
-      <div className="shrink-0 border-b border-border px-3 py-2">
-        <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Workspace</p>
-        <div className="flex gap-1.5 overflow-x-auto hide-scrollbar">
-          {workspaces.map((workspace) => (
-            <motion.button
-              className={cn(
-                'shrink-0 rounded-lg border px-2.5 py-1.5 text-left transition',
-                activeWorkspace === workspace.id
-                  ? 'border-primary bg-primary text-white'
-                  : 'border-border bg-white/80 text-slate-600 hover:border-teal-300 hover:bg-teal-50',
-              )}
-              key={workspace.id}
-              onClick={() => setActiveWorkspace(workspace.id)}
-              whileTap={{ scale: 0.96 }}
-            >
-              <span className="block text-[11px] font-black leading-tight">{workspace.name}</span>
-              <span className="block text-[10px] font-semibold opacity-60">{workspace.term}</span>
-            </motion.button>
-          ))}
-        </div>
-      </div>
-
-      {/* Documents — fixed section, compact rows */}
-      <div className="shrink-0 border-b border-border px-3 py-2">
-        <div className="mb-1.5 flex items-center justify-between">
-          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Documents</p>
-          <span className="text-[10px] font-black text-slate-400">{workspaceDocs.length} files</span>
-        </div>
-        <div className="space-y-1">
-          {workspaceDocs.map((doc) => (
-            <motion.article
-              className="flex items-center gap-2 rounded-lg border border-border bg-white/80 px-2.5 py-2 transition hover:border-teal-200 hover:bg-teal-50/50"
-              key={doc.id}
-              whileHover={{ x: 2 }}
-            >
-              <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary">
-                <FileText size={13} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-black text-slate-800">{doc.displayName}</p>
-                <p className="text-[10px] font-semibold text-slate-400">{doc.chapter}</p>
-              </div>
-              <StatusBadge status={doc.status} />
-            </motion.article>
-          ))}
-        </div>
-        {/* Upload compact inline */}
-        <button
-          className="mt-2 flex w-full items-center gap-2 rounded-lg border border-dashed border-teal-300 bg-teal-50/60 px-3 py-2 text-left transition hover:bg-teal-50"
-          onClick={() => fileInputRef.current?.click()}
-          type="button"
-        >
-          <input
-            accept=".pdf,.docx,.pptx,.txt"
-            className="sr-only"
-            multiple
-            onChange={(event) => handleFiles(event.target.files)}
-            ref={fileInputRef}
-            type="file"
-          />
-          <Upload className="shrink-0 text-primary" size={14} />
-          <span className="text-xs font-black text-slate-600">Upload document</span>
-          <span className="ml-auto text-[10px] font-semibold text-slate-400">PDF DOCX…</span>
-        </button>
-        <AnimatePresence>
-          {uploadJobs.length > 0 ? (
-            <div className="mt-2 space-y-1.5">
-              {uploadJobs.map((job) => (
-                <motion.div className="rounded-lg bg-white/78 p-2 shadow-sm" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} key={job.id}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="min-w-0 truncate text-[11px] font-black">{job.name}</p>
-                    <span className="text-[10px] font-black text-primary">{job.step}</span>
-                  </div>
-                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                    <motion.div
-                      className="shimmer-line h-full rounded-full bg-gradient-to-r from-primary via-teal-400 to-emerald-300"
-                      animate={{ width: `${job.progress}%` }}
-                      transition={{ duration: 0.35 }}
-                    />
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          ) : null}
-        </AnimatePresence>
-      </div>
-
-      {/* Chat History — scrollable, no visible scrollbar */}
-      <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-2">
-        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
-          <History size={11} />
-          Chat history
-        </div>
-        <SessionList
-          commitRename={commitRename}
-          renameValue={renameValue}
-          renamingSession={renamingSession}
-          selectedSession={selectedSession}
-          sessionList={sessionList}
-          setRenameValue={setRenameValue}
-          setSelectedSession={setSelectedSession}
-          setSessionToDelete={setSessionToDelete}
-          startRename={startRename}
-        />
-      </div>
-    </aside>
-  )
-}
-
-function UploadBox({ fileInputRef, handleFiles, uploadJobs }) {
-  return (
-    <section className="mt-5 rounded-xl border border-dashed border-teal-300 bg-teal-50/60 p-4 text-center">
-      <input
-        accept=".pdf,.docx,.ppt,.pptx"
-        className="sr-only"
-        multiple
-        onChange={(event) => handleFiles(event.target.files)}
-        ref={fileInputRef}
-        type="file"
-      />
-      <Upload className="mx-auto text-primary" size={22} />
-      <p className="mt-2 text-sm font-black text-slate-900">Upload document</p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">PDF, DOCX, PPT/PPTX</p>
-      <Button className="mt-3" onClick={() => fileInputRef.current?.click()} size="sm" type="button" variant="accent">
-        Choose files
-      </Button>
-      <AnimatePresence>
-        {uploadJobs.length > 0 ? (
-          <div className="mt-4 space-y-2 text-left">
-            {uploadJobs.map((job) => (
-              <motion.div className="rounded-lg bg-white/78 p-3 shadow-sm" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} key={job.id}>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="min-w-0 truncate text-xs font-black">{job.name}</p>
-                  <span className="text-xs font-black text-primary">{job.step}</span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                  <motion.div
-                    className="shimmer-line h-full rounded-full bg-gradient-to-r from-primary via-teal-400 to-emerald-300"
-                    animate={{ width: `${job.progress}%` }}
-                    transition={{ duration: 0.35 }}
-                  />
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        ) : null}
-      </AnimatePresence>
-    </section>
-  )
-}
-
-function SessionList({
-  commitRename,
-  renameValue,
-  renamingSession,
-  selectedSession,
-  sessionList,
-  setRenameValue,
-  setSelectedSession,
-  setSessionToDelete,
-  startRename,
-}) {
-  return (
-    <div className="space-y-1">
-      {sessionList.map((session) => (
-        <motion.div
-          className={cn(
-            'group rounded-lg border px-2 py-1.5 transition',
-            selectedSession === session.id
-              ? 'border-primary bg-teal-50'
-              : 'border-border bg-white/80 hover:bg-teal-50',
-          )}
-          key={session.id}
-          whileHover={{ x: 2 }}
-        >
-          {renamingSession === session.id ? (
-            <div className="flex gap-1.5">
-              <input
-                className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-0.5 text-xs font-semibold outline-none focus:border-teal-400"
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => { if (event.key === 'Enter') commitRename() }}
-                value={renameValue}
-              />
-              <IconButton label="Save name" onClick={commitRename}>
-                <Check size={13} />
-              </IconButton>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <button className="min-w-0 flex-1 text-left" onClick={() => setSelectedSession(session.id)}>
-                <p className="truncate text-[11px] font-black text-slate-800">{session.title}</p>
-                <p className="text-[10px] font-semibold text-slate-400">{session.updatedAt}</p>
+                <p className="truncate text-sm font-black">{workspace.workspaceTitle}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{workspace.visibility}</p>
               </button>
-              <div className="flex shrink-0 opacity-0 transition group-hover:opacity-100">
-                <IconButton label="Rename" onClick={() => startRename(session)}>
-                  <PencilLine size={11} />
-                </IconButton>
-                <IconButton label="Delete" onClick={() => setSessionToDelete(session)}>
-                  <Trash2 size={11} />
-                </IconButton>
-              </div>
+            ))}
+            {!workspaces.length && !loading ? <p className="text-sm font-semibold text-slate-500">No workspace is available.</p> : null}
+          </div>
+
+          <div className="mt-6 border-t border-slate-200 pt-4">
+            <p className="text-xs font-black uppercase text-slate-500">Documents</p>
+            <div className="mt-3 space-y-2">
+              {documents.map((document, index) => (
+                <div className="rounded-lg bg-white/80 p-3" key={document.id || `doc-${index}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="line-clamp-2 text-xs font-black">{document.displayName}</p>
+                    <StatusBadge status={document.status} />
+                  </div>
+                </div>
+              ))}
+              {!documents.length && !loading ? <p className="text-xs font-semibold text-slate-500">No documents in this workspace.</p> : null}
             </div>
-          )}
-        </motion.div>
-      ))}
+          </div>
+        </Panel>
+
+        <Panel className="flex min-h-[720px] flex-col overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-200 p-4">
+            <div>
+              <p className="text-xs font-black uppercase text-slate-500">Active session</p>
+              <h2 className="mt-1 text-base font-black">{activeWorkspaceData?.workspaceTitle || 'Select a workspace'}</h2>
+            </div>
+            {session ? <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">Connected</span> : null}
+          </div>
+
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            {loading ? <Loading /> : messages.length ? messages.map((message, index) => (
+              <Message
+                copied={copiedId === message.id}
+                key={message.id || `msg-${index}`}
+                message={message}
+                onCitation={setActiveCitation}
+                onCopy={() => copyAnswer(message)}
+                onSaveNote={() => openNote(message)}
+              />
+            )) : (
+              <div className="grid min-h-72 place-items-center text-center">
+                <div>
+                  <div className="mx-auto grid size-12 place-items-center rounded-xl bg-teal-50 text-primary"><Bot size={22} /></div>
+                  <h3 className="mt-4 text-lg font-black">Start a grounded conversation</h3>
+                  <p className="mt-2 max-w-md text-sm font-semibold leading-6 text-slate-500">Choose a prompt or ask a question about processed documents in this workspace.</p>
+                </div>
+              </div>
+            )}
+            {isAnswering ? <div className="flex items-center gap-2 text-sm font-bold text-slate-500"><Loader2 className="animate-spin text-primary" size={17} />Generating a source-grounded answer...</div> : null}
+          </div>
+
+          <div className="border-t border-slate-200 bg-white/70 p-4">
+            <div className="mb-3 flex flex-wrap gap-2">
+              {suggestions.map((suggestion) => <button className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 hover:border-teal-300" key={suggestion} onClick={() => setInput(suggestion)} type="button">{suggestion}</button>)}
+            </div>
+            <form className="flex gap-2" onSubmit={handleSubmit}>
+              <textarea
+                aria-label="Question"
+                className="min-h-12 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
+                placeholder={indexedDocuments.length ? 'Ask from the indexed documents...' : 'This workspace needs a processed document'}
+                value={input}
+              />
+              <Button aria-label="Send question" disabled={!canChat || !input.trim()} size="icon" type="submit"><Send size={17} /></Button>
+            </form>
+          </div>
+        </Panel>
+
+        <Panel className="p-4 xl:min-h-[720px]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-black">Citation</h2>
+            <FileText className="text-primary" size={18} />
+          </div>
+          {activeCitation ? (
+            <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-4">
+              <p className="text-sm font-black text-slate-950">{activeCitation.documentTitle || 'Source document'}</p>
+              <p className="mt-1 text-xs font-black text-teal-700">{pageLabel(activeCitation)}</p>
+              <p className="mt-3 text-sm font-semibold leading-6 text-slate-700">{activeCitation.quoteText || 'No source preview returned.'}</p>
+            </div>
+          ) : <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-sm font-semibold text-slate-500">Select a citation from an answer.</p>}
+
+          <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
+            <h2 className="text-base font-black">Learning notes</h2>
+            <NotebookPen className="text-primary" size={18} />
+          </div>
+          <div className="mt-3 space-y-2">
+            {notes.map((note, index) => (
+              <div className="rounded-lg border border-slate-200 bg-white/80 p-3" key={note.noteId || `note-${index}`}>
+                <p className="text-sm font-black">{note.noteTitle}</p>
+                <p className="mt-2 line-clamp-3 text-xs font-semibold leading-5 text-slate-500">{note.noteContent}</p>
+              </div>
+            ))}
+            {!notes.length && !loading ? <p className="text-sm font-semibold text-slate-500">No notes saved in this workspace.</p> : null}
+          </div>
+        </Panel>
+      </div>
+
+      <NoteDialog
+        draft={noteDraft}
+        onChange={setNoteDraft}
+        onClose={() => setNoteDraft(null)}
+        onSubmit={handleSaveNote}
+        saving={savingNote}
+      />
     </div>
   )
 }
 
-function StudioPanel({ activeChunks, highlightedChunk, setActiveCitation }) {
-  return (
-    <aside className="notebook-panel notebook-panel-dark flex h-full flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-black tracking-tight">Studio</h2>
-            <p className="text-[10px] font-semibold text-slate-500">Citation previews and follow-up questions</p>
-          </div>
-          <Sparkles className="text-primary" size={16} />
-        </div>
-      </div>
-
-      {/* Scrollable content — no visible scrollbar */}
-      <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar px-3 py-3 space-y-3">
-
-        {/* Active citation — compact */}
-        {highlightedChunk ? (
-          <motion.section
-            className="rounded-xl border border-teal-100 bg-white p-3 shadow-sm"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Active citation</p>
-            <div className="mt-1.5 flex items-center justify-between gap-2">
-              <p className="text-2xl font-black text-slate-900">{highlightedChunk.id}</p>
-              <span
-                className="relevance-ring text-[10px] font-black text-primary"
-                style={{ '--value': `${highlightedChunk.relevance}%` }}
-              >
-                {highlightedChunk.relevance}%
-              </span>
-            </div>
-            <p className="mt-2 text-xs font-medium leading-5 text-slate-600 line-clamp-4">{highlightedChunk.content}</p>
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[10px] font-black text-teal-700">Page {highlightedChunk.page}</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-500">{highlightedChunk.tokenLength} tokens</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-500">{highlightedChunk.metadata}</span>
-            </div>
-          </motion.section>
-        ) : (
-          <div className="rounded-xl border border-dashed border-teal-200 p-4 text-center text-slate-500">
-            <Layers3 className="mx-auto" size={22} />
-            <p className="mt-2 text-xs font-black text-slate-700">No citation selected</p>
-            <p className="mt-1 text-[10px] font-semibold leading-4">Citations appear after an answer includes indexed sources.</p>
-          </div>
-        )}
-
-        {/* Related sources — compact, max 3 */}
-        <section>
-          <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Related sources</p>
-          <div className="space-y-1.5">
-            {(activeChunks.length ? activeChunks : chunks.slice(0, 3)).map((chunk) => (
-              <motion.button
-                className="w-full rounded-lg border border-border bg-white/80 px-3 py-2 text-left transition hover:border-teal-200 hover:bg-teal-50"
-                key={chunk.id}
-                onClick={() => setActiveCitation(chunk.id)}
-                whileHover={{ x: 3 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-black text-slate-800">{chunk.id}</p>
-                  <span className="text-[10px] font-black text-primary">{chunk.relevance}%</span>
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] font-medium leading-4 text-slate-500">{chunk.content}</p>
-              </motion.button>
-            ))}
-          </div>
-        </section>
-
-        {/* Suggested questions — compact */}
-        <section className="rounded-xl border border-border bg-white/80 px-3 py-2.5">
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-black text-slate-700">
-            <Search size={12} />
-            Suggested questions
-          </div>
-          <div className="space-y-1.5">
-            {suggestions.map((suggestion) => (
-              <div
-                className="rounded-lg bg-teal-50 px-2.5 py-1.5 text-[10px] font-semibold leading-4 text-slate-600"
-                key={suggestion}
-              >
-                {suggestion}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-    </aside>
-  )
-}
-
-function ChatMessage({
-  activeCitation,
-  copiedId,
-  feedback,
-  message,
-  onCitation,
-  onCopy,
-  onFeedback,
-  onRegenerate,
-}) {
+function Message({ copied, message, onCitation, onCopy, onSaveNote }) {
   const isUser = message.role === 'user'
-
   return (
-    <motion.article
-      className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}
-      initial={{ opacity: 0, y: 18, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.28 }}
-    >
-      {!isUser ? (
-        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-white shadow-lg shadow-teal-900/10">
-          <Bot size={18} />
-        </div>
-      ) : null}
-      <motion.div
-        className={cn(
-          'max-w-[760px] rounded-lg border p-4 shadow-lg',
-          isUser
-            ? 'border-primary bg-primary text-white'
-            : 'border-border bg-white/95 text-slate-800',
-        )}
-        whileHover={{ y: -2 }}
-      >
-        <p className="text-sm leading-7">{message.content}</p>
-        {message.citations?.length ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {message.citations.map((citation) => {
-              const chunk = chunks.find((item) => item.id === citation)
-              const doc = documents.find((item) => item.id === chunk?.documentId)
-
-              return (
-                <motion.button
-                  className={cn(
-                    'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-black transition',
-                    activeCitation === citation
-                      ? 'border-teal-300 bg-teal-50 text-primary'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-teal-200',
-                  )}
-                  key={citation}
-                  onClick={() => onCitation(citation)}
-                  whileHover={{ y: -2 }}
-                  whileTap={{ scale: 0.97 }}
-                >
-                  <FileText size={13} />
-                  {doc?.displayName} / p.{chunk?.page}
-                </motion.button>
-              )
-            })}
-          </div>
-        ) : message.role === 'assistant' && message.confidence === 'low' ? (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-            This answer does not have enough source support to verify.
-          </p>
-        ) : null}
-
-        {!isUser ? (
-          <div className="mt-4 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-3">
-            <IconButton label="Copy answer" onClick={() => onCopy(message)}>
-              {copiedId === message.id ? <Check size={15} /> : <Clipboard size={15} />}
-            </IconButton>
-            <IconButton label="Regenerate" onClick={onRegenerate}>
-              <RefreshCcw size={15} />
-            </IconButton>
-            <IconButton
-              className={feedback[message.id] === 'up' ? 'bg-emerald-50 text-emerald-700' : ''}
-              label="Helpful answer"
-              onClick={() => onFeedback('up')}
-            >
-              <ThumbsUp size={15} />
-            </IconButton>
-            <IconButton
-              className={feedback[message.id] === 'down' ? 'bg-red-50 text-red-700' : ''}
-              label="Unhelpful answer"
-              onClick={() => onFeedback('down')}
-            >
-              <ThumbsDown size={15} />
-            </IconButton>
-          </div>
-        ) : null}
-      </motion.div>
-      {isUser ? (
-        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary shadow-lg shadow-teal-100">
-          <UserRound size={18} />
-        </div>
-      ) : null}
+    <motion.article className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+      {!isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-white"><Bot size={17} /></div> : null}
+      <div className={cn('max-w-[82%] rounded-lg p-4', isUser ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white')}>
+        <p className="whitespace-pre-wrap text-sm font-semibold leading-6">{message.content}</p>
+        {message.citations?.length ? <div className="mt-3 flex flex-wrap gap-2">{message.citations.map((citation, index) => (
+          <button className="rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-black text-teal-700" key={`${citation.documentTitle}-${index}`} onClick={() => onCitation(citation)} type="button">{citation.documentTitle || `Source ${index + 1}`} / {pageLabel(citation)}</button>
+        ))}</div> : null}
+        {!isUser ? <div className="mt-3 flex gap-1 border-t border-slate-100 pt-2">
+          <IconButton label="Copy answer" onClick={onCopy}>{copied ? <Check size={15} /> : <Clipboard size={15} />}</IconButton>
+          <IconButton label="Save as note" onClick={onSaveNote}><Save size={15} /></IconButton>
+        </div> : null}
+      </div>
+      {isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary"><UserRound size={17} /></div> : null}
     </motion.article>
   )
+}
+
+function NoteDialog({ draft, onChange, onClose, onSubmit, saving }) {
+  if (!draft) return null
+  return <AnimatePresence><motion.div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+    <motion.form className="os-panel w-full max-w-lg p-5 shadow-2xl" initial={{ y: 20 }} animate={{ y: 0 }} onSubmit={onSubmit}>
+      <div className="flex items-center justify-between"><h2 className="text-xl font-black">Save learning note</h2><button aria-label="Close" className="grid size-9 place-items-center rounded-lg hover:bg-slate-100" onClick={onClose} type="button"><X size={17} /></button></div>
+      <label className="mt-5 block text-sm font-black">Title<input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 font-semibold outline-none focus:border-teal-400" onChange={(event) => onChange({ ...draft, title: event.target.value })} required value={draft.title} /></label>
+      <label className="mt-3 block text-sm font-black">Content<textarea className="mt-1 min-h-48 w-full rounded-lg border border-slate-200 px-3 py-2.5 font-semibold leading-6 outline-none focus:border-teal-400" onChange={(event) => onChange({ ...draft, content: event.target.value })} required value={draft.content} /></label>
+      <div className="mt-5 flex justify-end gap-2"><Button onClick={onClose} type="button" variant="secondary">Cancel</Button><Button disabled={saving} type="submit">{saving ? <Loader2 className="animate-spin" size={16} /> : <NotebookPen size={16} />}Save note</Button></div>
+    </motion.form>
+  </motion.div></AnimatePresence>
+}
+
+function toUiMessage(message, citations = []) {
+  return {
+    id: message.messageId,
+    role: message.senderRole?.toLowerCase() === 'assistant' ? 'assistant' : 'user',
+    content: message.messageContent,
+    citations,
+  }
+}
+
+function pageLabel(citation) {
+  if (!citation.pageStart) return 'Page unavailable'
+  return citation.pageEnd && citation.pageEnd !== citation.pageStart
+    ? `Pages ${citation.pageStart}-${citation.pageEnd}`
+    : `Page ${citation.pageStart}`
+}
+
+function Loading() {
+  return <div className="flex min-h-72 items-center justify-center gap-3 text-sm font-black text-slate-500"><Loader2 className="animate-spin text-primary" size={20} />Loading workspace data...</div>
+}
+
+function ErrorBanner({ message }) {
+  return <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700"><AlertTriangle className="mt-0.5 shrink-0" size={17} />{message}</div>
 }
 
 export default WorkspacePage

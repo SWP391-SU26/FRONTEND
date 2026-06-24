@@ -6,6 +6,13 @@ function getRequesterId() {
   return getSavedUser()?.id ?? ''
 }
 
+export async function getDocuments() {
+  const requesterId = getRequesterId()
+  const documents = await request(`/documents?requesterId=${requesterId}`)
+  const list = Array.isArray(documents) ? documents : (documents?.data ?? [])
+  return list.map((doc) => toUiDocument(doc))
+}
+
 export async function getDocumentsByWorkspace(workspaceId) {
   const requesterId = getRequesterId()
   const documents = await request(`/documents/workspace/${workspaceId}?requesterId=${requesterId}`)

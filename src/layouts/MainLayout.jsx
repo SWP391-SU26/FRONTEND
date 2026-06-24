@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
+import { isAdminSession } from '../services/authService.js'
 
 const navItems = [
   { href: '/workspace', label: 'AI Chat', icon: MessageSquareText, end: true },
@@ -72,13 +73,15 @@ function MainLayout() {
           </nav>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            <NavLink
-              className="nav-pill hidden min-h-10 items-center gap-2 px-3 text-sm font-black text-slate-600 transition hover:text-primary sm:flex"
-              to="/admin"
-            >
-              <ShieldCheck size={15} />
-              Admin
-            </NavLink>
+            {isAdminSession() ? (
+              <NavLink
+                className="nav-pill hidden min-h-10 items-center gap-2 px-3 text-sm font-black text-slate-600 transition hover:text-primary sm:flex"
+                to="/admin"
+              >
+                <ShieldCheck size={15} />
+                Admin
+              </NavLink>
+            ) : null}
             <NavLink
               aria-label="Settings"
               className="nav-pill relative grid size-10 place-items-center text-slate-600 transition hover:text-primary"

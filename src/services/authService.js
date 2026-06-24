@@ -16,7 +16,7 @@ export async function register(payload) {
       fullName: payload.fullName,
       email: payload.email,
       password: payload.password,
-      roleName: payload.roleName ?? 'USER',
+      roleName: payload.roleName ?? 'STUDENT',
     }),
   })
 
