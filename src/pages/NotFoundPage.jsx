@@ -1,7 +1,9 @@
 import { ArrowLeft } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button, EmptyState } from '../components/ui.jsx'
-import { studyImage } from '../data/mockData.js'
+
+const studyImage =
+  'https://images.pexels.com/photos/7777679/pexels-photo-7777679.jpeg?auto=compress&cs=tinysrgb&w=1400'
 
 function NotFoundPage() {
   return (

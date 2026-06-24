@@ -103,7 +103,7 @@ function RegisterPage() {
     <AuthShell
       asideAlign="right"
       asideEyebrow="FStu onboarding"
-      asideText="Start with a mock account now, then connect real authentication when the backend is ready."
+      asideText="Create an account to start managing courses, uploading files, and asking questions."
       asideTitle="Build a study workspace around your course materials."
       highlights={benefits}
     >

@@ -126,9 +126,6 @@ function LibraryPage() {
 
         const documents = await getDocumentsByWorkspace(selectedId)
         
-        // Load simulated docs from local storage
-        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
-        const filteredSimulated = simulatedList.filter((d) => d.workspaceId === selectedId)
 
         const documentsWithChunks = await Promise.all(
           documents.map(async (doc) => {
@@ -145,7 +142,7 @@ function LibraryPage() {
           }),
         )
 
-        if (isMounted) setDocs([...filteredSimulated, ...documentsWithChunks])
+        if (isMounted) setDocs(documentsWithChunks)
       } catch (loadError) {
         if (isMounted) setError(loadError.message)
       } finally {
@@ -185,15 +182,8 @@ function LibraryPage() {
     setDeleting(true)
     setError('')
     try {
-      if (String(docToDelete.id).startsWith('mock_doc_')) {
-        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
-        const updated = simulatedList.filter((d) => d.id !== docToDelete.id)
-        localStorage.setItem('fstu_simulated_docs', JSON.stringify(updated))
-        setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
-      } else {
-        await deleteDocument(docToDelete.id)
-        setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
-      }
+      await deleteDocument(docToDelete.id)
+      setDocs((curr) => curr.filter((d) => d.id !== docToDelete.id))
       setDocToDelete(null)
     } catch (err) {
       setError(err.message)
@@ -506,7 +496,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
   const [isDragOver, setIsDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
-  const [cloudinaryError, setCloudinaryError] = useState(false)
   const fileInputRef = useRef(null)
 
 
@@ -535,7 +524,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
 
     setUploading(true)
     setError('')
-    setCloudinaryError(false)
 
     const user = getSavedUser()
     const targetWorkspace =
@@ -566,12 +554,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
         })
       } catch (err) {
         setProgresses((prev) => ({ ...prev, [file.name]: -1 })) // -1 = error
-        if (err.code === 'CLOUDINARY_NOT_CONFIGURED') {
-          setCloudinaryError(true)
-          setError(`Cloudinary is not configured on the backend. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.`)
-        } else {
-          setError(`Failed to upload "${file.name}": ${err.message}`)
-        }
+        setError(`Failed to upload "${file.name}": ${err.message}`)
       }
     }
 
@@ -582,41 +565,6 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
     }
   }
 
-  function handleSimulateUpload() {
-    const targetWorkspace =
-      workspaces.find((w) => w.id === uploadWorkspaceId) ??
-      courseWorkspaces.find((w) => w.id === uploadWorkspaceId)
-
-    const simulatedDocs = files.map((file) => ({
-      id: `mock_doc_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-      name: file.name,
-      displayName: file.name,
-      type: file.name.split('.').pop().toUpperCase(),
-      subject: targetWorkspace?.name ?? 'Course Workspace',
-      chapter: 'General',
-      status: 'Uploaded',
-      chunks: 0,
-      embeddingModel: 'Not embedded',
-      uploadedAt: new Date().toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      }),
-      size: 'Stored',
-      pages: 10,
-      workspaceId: uploadWorkspaceId,
-      courseId: uploadCourseId || targetWorkspace?.courseId,
-      chapterId: uploadChapterId || null,
-      preview: 'Simulated successful upload (local mock due to Cloudinary not configured).'
-    }))
-
-    // Save to local storage so they can be viewed/persisted
-    const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
-    localStorage.setItem('fstu_simulated_docs', JSON.stringify([...simulatedDocs, ...simulatedList]))
-
-    onUploaded(simulatedDocs)
-    onClose()
-  }
   return (
     <motion.div
       className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm"
@@ -804,11 +752,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
 
         {/* Actions */}
         <div className="flex flex-wrap justify-end gap-2">
-          {cloudinaryError && (
-            <Button onClick={handleSimulateUpload} className="bg-amber-500 hover:bg-amber-600 text-white">
-              Simulate Upload (Mock)
-            </Button>
-          )}
+
           <Button disabled={uploading} onClick={onClose} variant="secondary">
             Cancel
           </Button>

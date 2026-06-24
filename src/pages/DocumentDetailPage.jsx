@@ -45,18 +45,6 @@ function DocumentDetailPage() {
       setLoading(true)
       setError('')
       try {
-        if (id.startsWith('mock_doc_')) {
-          const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
-          const found = simulatedList.find((d) => d.id === id)
-          if (!found) throw new Error('Simulated document not found')
-
-          if (isMounted) {
-            setDoc(found)
-            setChunks([])
-          }
-          return
-        }
-
         const [docData, chunksData] = await Promise.all([
           getDocument(id),
           getDocumentChunks(id).catch(() => []), // fallback to empty array if endpoint fails or not implemented
@@ -87,15 +75,6 @@ function DocumentDetailPage() {
     let isMounted = true
 
     async function checkPreview() {
-      if (id.startsWith('mock_doc_')) {
-        setPreviewState({
-          loading: false,
-          available: false,
-          message: 'Preview is not available for simulated mock documents (mock documents do not store real files).',
-        })
-        return
-      }
-
       if (doc.type === 'PDF') {
         setPreviewState({ loading: false, available: true, message: '' })
         return
@@ -138,8 +117,8 @@ function DocumentDetailPage() {
     }
   }, [doc, id])
 
-  const fileUrl = doc ? (id.startsWith('mock_doc_') ? '#' : getDocumentFileUrl(doc.id)) : '#'
-  const previewUrl = doc ? (doc.type === 'PDF' ? fileUrl : (id.startsWith('mock_doc_') ? '#' : getDocumentPreviewUrl(doc.id))) : '#'
+  const fileUrl = doc ? getDocumentFileUrl(doc.id) : '#'
+  const previewUrl = doc ? (doc.type === 'PDF' ? fileUrl : getDocumentPreviewUrl(doc.id)) : '#'
 
   const docChunks = useMemo(() => {
     return chunks.filter((chunk) => {
@@ -160,13 +139,7 @@ function DocumentDetailPage() {
   async function handleDeleteDocument() {
     setDeleting(true)
     try {
-      if (id.startsWith('mock_doc_')) {
-        const simulatedList = JSON.parse(localStorage.getItem('fstu_simulated_docs') ?? '[]')
-        const updated = simulatedList.filter((d) => d.id !== id)
-        localStorage.setItem('fstu_simulated_docs', JSON.stringify(updated))
-      } else {
-        await deleteDocument(id)
-      }
+      await deleteDocument(id)
       navigate('/library')
     } catch (err) {
       setError(err.message)
@@ -227,12 +200,10 @@ function DocumentDetailPage() {
                   PDF preview inside workspace environment
                 </p>
               </div>
-              {!id.startsWith('mock_doc_') && (
-                <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} size="sm" type="button" variant="secondary" className="text-xs py-1 px-3">
-                  <ExternalLink size={12} className="mr-1" />
-                  Open tab
-                </Button>
-              )}
+              <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} size="sm" type="button" variant="secondary" className="text-xs py-1 px-3">
+                <ExternalLink size={12} className="mr-1" />
+                Open tab
+              </Button>
             </div>
             
             <div className="flex-1 min-h-[500px] lg:min-h-[65vh] flex flex-col bg-slate-100/50">
@@ -259,14 +230,12 @@ function DocumentDetailPage() {
                     <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-500">
                       {previewState.message}
                     </p>
-                    {!id.startsWith('mock_doc_') && (
-                      <div className="mt-5">
-                        <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} type="button" size="sm" className="text-xs">
-                          <ExternalLink size={12} className="mr-1" />
-                          Open original file
-                        </Button>
-                      </div>
-                    )}
+                    <div className="mt-5">
+                      <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} type="button" size="sm" className="text-xs">
+                        <ExternalLink size={12} className="mr-1" />
+                        Open original file
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -298,14 +267,10 @@ function DocumentDetailPage() {
               </p>
 
               <div className="mt-5 grid grid-cols-2 gap-2">
-                {!id.startsWith('mock_doc_') ? (
-                  <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} variant="secondary" className="w-full text-xs justify-center py-2">
-                    <ExternalLink size={12} className="mr-1.5" />
-                    View original
-                  </Button>
-                ) : (
-                  <div className="col-span-1" />
-                )}
+                <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} variant="secondary" className="w-full text-xs justify-center py-2">
+                  <ExternalLink size={12} className="mr-1.5" />
+                  View original
+                </Button>
                 <Button onClick={() => setShowDeleteModal(true)} variant="danger" className="w-full text-xs justify-center py-2">
                   <Trash2 size={12} className="mr-1.5" />
                   Delete
@@ -354,9 +319,8 @@ function DocumentDetailPage() {
       </div>
 
       {/* CHUNK READER SECTION */}
-      {!id.startsWith('mock_doc_') && (
-        <div className="mt-8 border-t border-slate-100 pt-8">
-          <div className="flex items-center gap-3 mb-6">
+      <div className="mt-8 border-t border-slate-100 pt-8">
+        <div className="flex items-center gap-3 mb-6">
             <div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary">
               <Layers3 size={20} />
             </div>
@@ -469,7 +433,6 @@ function DocumentDetailPage() {
             </aside>
           </div>
         </div>
-      )}
 
       {showDeleteModal ? (
         <ConfirmModal

@@ -274,7 +274,7 @@ function AccountTab({ onLogout, onSave }) {
       <div className="mt-6 rounded-[1.5rem] border border-border bg-secondary p-5">
         <h3 className="text-lg font-black">Session actions</h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Log out clears the local mock token and returns you to the login page.
+          Log out clears your session and returns you to the login page.
         </p>
         <div className="mt-4 flex gap-3">
           <Button className="rounded-full" onClick={onLogout} type="button" variant="secondary">
@@ -354,9 +354,8 @@ function SecurityTab() {
         <ShieldCheck className="size-8 text-primary" strokeWidth={2} />
         <h3 className="mt-4 text-lg font-black">Session protection</h3>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-teal-950/70">
-          FStu currently stores a mock access token in local storage for demo
-          routing. Real token refresh, MFA, and audit logs should be connected
-          when backend authentication is ready.
+          FStu stores a secure access token in local storage for authentication.
+          Additional features like MFA, token refresh, and audit logs can be enabled on the server.
         </p>
       </div>
     </div>
