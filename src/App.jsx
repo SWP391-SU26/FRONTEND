@@ -8,14 +8,10 @@ import MainLayout from './layouts/MainLayout.jsx'
 import {
   AdminDashboardPage,
   AdminDocumentsPage,
-  AdminExperimentsPage,
-  AdminIndexingPage,
-  AdminLogsPage,
-  AdminModelSettingsPage,
   AdminResearchDashboardPage,
-  AdminTestSetPage,
   AdminUsersPage,
 } from './pages/admin/AdminPages.jsx'
+import { AdminTestSetPage } from './pages/admin/AdminTestSetPage.jsx'
 import DocumentDetailPage from './pages/DocumentDetailPage.jsx'
 import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
@@ -37,12 +33,13 @@ function App() {
         <Route path="documents" element={<AdminDocumentsPage />} />
         <Route path="courses" element={<CourseManagementPage />} />
         <Route path="subjects" element={<Navigate replace to="/admin/courses" />} />
-        <Route path="indexing" element={<AdminIndexingPage />} />
-        <Route path="model-settings" element={<AdminModelSettingsPage />} />
         <Route path="test-set" element={<AdminTestSetPage />} />
-        <Route path="experiments" element={<AdminExperimentsPage />} />
         <Route path="research-dashboard" element={<AdminResearchDashboardPage />} />
-        <Route path="logs" element={<AdminLogsPage />} />
+        {/* Redirects: old standalone pages → unified Research Dashboard */}
+        <Route path="indexing" element={<Navigate replace to="/admin/research-dashboard" />} />
+        <Route path="model-settings" element={<Navigate replace to="/admin/research-dashboard" />} />
+        <Route path="experiments" element={<Navigate replace to="/admin/research-dashboard" />} />
+        <Route path="logs" element={<Navigate replace to="/admin/research-dashboard" />} />
       </Route>
       <Route element={<MainLayout />}>
         <Route element={<Navigate replace to="/workspace" />} path="/app" />

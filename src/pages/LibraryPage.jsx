@@ -546,11 +546,15 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
           uploadedBy: user?.id,
         })
 
+        // Fetch chunks for the newly uploaded document since backend processes it synchronously
+        const chunks = await getDocumentChunks(doc.id).catch(() => [])
+
         setProgresses((prev) => ({ ...prev, [file.name]: 100 }))
         uploadedDocs.push({
           ...doc,
           subject: targetWorkspace?.name ?? doc.subject,
-          chunks: 0,
+          chunks: chunks.length,
+          embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not embedded',
         })
       } catch (err) {
         setProgresses((prev) => ({ ...prev, [file.name]: -1 })) // -1 = error

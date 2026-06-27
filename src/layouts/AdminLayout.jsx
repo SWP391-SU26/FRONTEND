@@ -1,19 +1,14 @@
 import { motion } from 'framer-motion'
 import {
-  Activity,
   BarChart3,
   BookOpen,
   Brain,
   ClipboardList,
-  Database,
   FileText,
-  FlaskConical,
   Gauge,
   Home,
-  ListTree,
   LogOut,
   Search,
-  Settings,
   Users,
 } from 'lucide-react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
@@ -25,12 +20,8 @@ const adminNav = [
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/documents', label: 'Documents', icon: FileText },
   { href: '/admin/courses', label: 'Courses', icon: BookOpen },
-  { href: '/admin/indexing', label: 'Indexing', icon: Database },
-  { href: '/admin/model-settings', label: 'Model Settings', icon: Settings },
   { href: '/admin/test-set', label: 'Test Set', icon: ClipboardList },
-  { href: '/admin/experiments', label: 'Experiments', icon: FlaskConical },
   { href: '/admin/research-dashboard', label: 'Research', icon: BarChart3 },
-  { href: '/admin/logs', label: 'Logs', icon: Activity },
 ]
 
 function AdminLayout() {
@@ -108,7 +99,7 @@ function AdminLayout() {
               whileHover={{ y: -1 }}
             >
               <Search size={16} />
-              <span className="truncate">Search users, documents, jobs, experiments...</span>
+              <span className="truncate">Search users, documents, courses...</span>
             </motion.div>
             <div className="flex items-center gap-2">
               <div className="hidden rounded-lg bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 sm:flex">
