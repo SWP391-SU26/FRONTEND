@@ -715,11 +715,6 @@ a {
 }
 
 /* Library redesign */
-.library-page {
-  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
-}
-
-.library-page .library-hero-title,
 .library-page .library-display-number {
   letter-spacing: 0;
 }

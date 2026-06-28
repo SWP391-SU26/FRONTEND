@@ -273,14 +273,14 @@ function LibraryPage() {
               <div className="grid size-9 place-items-center rounded-xl bg-teal-500 text-white shadow-md shadow-teal-200">
                 <BookOpen size={18} />
               </div>
-              <span className="text-xs font-bold uppercase tracking-[0.14em] text-teal-600">
+              <span className="text-xs font-black uppercase text-teal-700">
                 Knowledge Base
               </span>
             </div>
-            <h1 className="library-hero-title text-4xl font-extrabold leading-tight text-slate-950 sm:text-5xl">
+            <h1 className="mt-2 text-3xl font-black text-slate-950 sm:text-4xl">
               Library
             </h1>
-            <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-slate-600">
+            <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
               Upload, manage and index course documents for AI-powered Q&A.
             </p>
           </div>
@@ -347,12 +347,12 @@ function LibraryPage() {
       {/* ── Filter Toolbar ────────────────────────────────────────────────── */}
       <Panel className="library-filter-panel relative z-30 p-3 sm:p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-700">
+          <div className="flex items-center gap-2 text-xs font-black uppercase text-teal-700">
             <Filter size={15} />
             Filters
           </div>
           <motion.span
-            className="hidden rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-primary sm:inline-flex"
+            className="hidden rounded-full bg-teal-50 px-3 py-1 text-xs font-black text-primary sm:inline-flex"
             key={filteredDocs.length}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -529,7 +529,7 @@ function AnimatedFilterSelect({ label, onChange, options, value }) {
         type="button"
       >
         <span className="min-w-0">
-          <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+          <span className="block text-[10px] font-medium uppercase tracking-[0.12em] text-slate-400">
             {label}
           </span>
           <span className="block truncate font-semibold text-slate-900">
@@ -902,7 +902,7 @@ function StatCard({ icon: Icon, label, value }) {
           <Icon size={17} />
         </div>
         <motion.p
-          className="library-display-number text-3xl font-bold text-slate-950"
+          className="library-display-number text-3xl font-black text-slate-950"
           key={value}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -911,7 +911,7 @@ function StatCard({ icon: Icon, label, value }) {
           {value}
         </motion.p>
       </div>
-      <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+      <p className="mt-3 text-xs font-black uppercase text-slate-500">{label}</p>
     </motion.div>
   )
 }
@@ -949,8 +949,8 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
                 <FileText size={18} />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-bold text-slate-950">{doc.displayName}</h2>
-                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">
+                <h2 className="truncate text-sm font-black text-slate-950">{doc.displayName}</h2>
+                <p className="mt-0.5 truncate text-xs font-semibold text-slate-400">
                   {doc.subject}
                 </p>
               </div>
@@ -959,10 +959,10 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
 
             {/* Metadata chips */}
             <div className="mt-4 flex flex-wrap gap-1.5">
-              <span className={cn('rounded-md px-2 py-1 text-xs font-semibold', colors.bg, colors.text)}>
+              <span className={cn('rounded-md px-2 py-1 text-xs font-black', colors.bg, colors.text)}>
                 {doc.type}
               </span>
-              <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+              <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">
                 {doc.chunks} chunks
               </span>
               <StatusBadge status={doc.embeddingStatus} />
@@ -974,7 +974,7 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
             </div>
 
             {/* Uploaded at */}
-            <p className="mt-3 text-xs font-medium text-slate-400">{doc.uploadedAt}</p>
+            <p className="mt-3 text-xs font-semibold text-slate-400">{doc.uploadedAt}</p>
 
             {/* Action buttons */}
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1019,7 +1019,7 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
     <Panel className={cn('mb-8 overflow-hidden', compact ? 'hidden xl:block' : '')}>
       <div className="flex items-center justify-between border-b border-border p-4">
         <div>
-          <h2 className="text-lg font-bold tracking-tight">All documents</h2>
+          <h2 className="text-lg font-black tracking-tight">All documents</h2>
           <p className="text-sm font-semibold text-slate-500">
             {docs.length} document{docs.length !== 1 ? 's' : ''} in this workspace
           </p>
@@ -1028,7 +1028,7 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-          <thead className="bg-white/52 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+          <thead className="bg-white/52 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
             <tr>
               {['Document', 'Type', 'Workspace', 'Status', 'Embeddings', 'Chunks', 'Pages', 'Uploaded', 'Actions'].map(
                 (h) => (
@@ -1061,11 +1061,11 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                       >
                         <FileText size={15} />
                       </div>
-                      <p className="truncate font-bold text-slate-950">{doc.displayName}</p>
+                      <p className="truncate font-black text-slate-950">{doc.displayName}</p>
                     </div>
                   </td>
                   <td className="px-4 py-4">
-                    <span className={cn('rounded-md px-2 py-1 text-xs font-semibold', colors.bg, colors.text)}>
+                    <span className={cn('rounded-md px-2 py-1 text-xs font-black', colors.bg, colors.text)}>
                       {doc.type}
                     </span>
                   </td>

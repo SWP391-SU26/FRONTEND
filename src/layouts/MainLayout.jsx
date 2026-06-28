@@ -39,7 +39,7 @@ function MainLayout() {
         <div className="mx-auto grid max-w-[1560px] grid-cols-[1fr_auto_1fr] items-center gap-3">
           <NavLink className="group flex min-w-0 items-center gap-3" to="/workspace">
             <motion.span
-              className="flex h-11 w-28 shrink-0 items-center rounded-xl border border-border bg-white px-2 shadow-sm"
+              className="flex h-11 w-28 shrink-0 items-center px-0"
               whileHover={{ y: -2, scale: 1.04 }}
               whileTap={{ scale: 0.95 }}
               transition={{ type: 'spring', stiffness: 430, damping: 28 }}

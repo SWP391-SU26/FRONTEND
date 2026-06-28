@@ -52,7 +52,7 @@ function AdminLayout() {
           <div className="source-glow" />
           <div className="relative border-b border-border p-4">
             <NavLink className="flex items-center gap-3" to="/workspace">
-              <span className="flex h-11 w-28 items-center rounded-xl border border-border bg-white px-2 shadow-sm">
+              <span className="flex h-11 w-28 items-center">
                 <img
                   alt="FStu"
                   className="w-full object-contain"

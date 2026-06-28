@@ -396,6 +396,8 @@ export function AdminResearchDashboardPage() {
   }, [results])
 
   const selectedExperiment = experiments.find((experiment) => experiment.id === selectedExpId)
+  const completedExperiments = experiments.filter((experiment) => experiment.status === 'COMPLETED').length
+  const runningExperiments = experiments.filter((experiment) => experiment.status === 'RUNNING').length
 
   return (
     <CrudPage
@@ -405,20 +407,35 @@ export function AdminResearchDashboardPage() {
     >
       {error ? <Alert message={error} /> : null}
       {loading ? <Loading label="Loading experiments" /> : (
-        <div className="space-y-4">
-          <Panel className="p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <SectionTitle
-                icon={FlaskConical}
-                subtitle={selectedExperiment?.name || 'No experiment selected'}
-                title="Experiment Results"
-              />
+        <div className="space-y-5">
+          <Panel className="overflow-hidden p-5">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-r from-teal-100/55 via-white/30 to-transparent" />
+            <div className="relative grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div>
+                <SectionTitle
+                  icon={FlaskConical}
+                  subtitle={selectedExperiment?.name || 'No experiment selected'}
+                  title="Experiment Results"
+                />
+
+                {selectedExperiment ? (
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-lg border border-teal-100 bg-teal-50 px-2.5 py-1 font-semibold text-primary">
+                      {selectedExperiment.method || selectedExperiment.experimentType || 'Evaluation'}
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white/72 px-2.5 py-1 font-medium text-slate-600">
+                      {selectedExperiment.llmModel || 'No model name'}
+                    </span>
+                    <StatusBadge status={statusForBadge(selectedExperiment.status)} />
+                  </div>
+                ) : null}
+              </div>
 
               {experiments.length > 0 ? (
-                <label className="flex min-w-72 items-center gap-2 text-xs font-black text-slate-700">
+                <label className="block text-sm font-semibold text-slate-700">
                   Experiment
                   <select
-                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-teal-400"
+                    className="mt-1 h-11 w-full rounded-xl border border-border bg-white/90 px-3 text-sm font-medium text-slate-900 shadow-[0_10px_24px_rgba(15,118,110,.06)] outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
                     onChange={(event) => setSelectedExpId(event.target.value)}
                     value={selectedExpId}
                   >
@@ -429,27 +446,37 @@ export function AdminResearchDashboardPage() {
                     ))}
                   </select>
                 </label>
-              ) : null}
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 bg-white/52 p-4 text-sm font-medium leading-6 text-slate-500">
+                  No experiment records were returned by the backend.
+                </p>
+              )}
             </div>
           </Panel>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard icon={Activity} label="Result rows" value={results.length} />
             <MetricCard icon={Brain} label="Experiments" value={experiments.length} />
-            <MetricCard icon={Gauge} label="Avg latency" value={currentMetrics ? `${currentMetrics.avgLatencyMs} ms` : 'N/A'} />
-            <MetricCard icon={Database} label="Avg cost" value={currentMetrics ? `$${currentMetrics.avgCost}` : 'N/A'} />
+            <MetricCard icon={Gauge} label="Completed" value={completedExperiments} />
+            <MetricCard icon={Database} label="Running" value={runningExperiments} />
           </div>
 
           {currentMetrics ? (
             <Panel className="p-5">
-              <SectionTitle icon={BarChart3} title="Backend Result Metrics" subtitle="Averages computed only from real experiment result rows." />
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <MiniStat label="Faithfulness" value={`${Math.round(currentMetrics.faithfulness * 100)}%`} />
-                <MiniStat label="Answer relevance" value={`${Math.round(currentMetrics.answerRelevance * 100)}%`} />
-                <MiniStat label="Context precision" value={`${Math.round(currentMetrics.contextPrecision * 100)}%`} />
-                <MiniStat label="Context recall" value={`${Math.round(currentMetrics.contextRecall * 100)}%`} />
-                <MiniStat label="Answer correctness" value={`${Math.round(currentMetrics.answerCorrectness * 100)}%`} />
-                <MiniStat label="Semantic similarity" value={`${Math.round(currentMetrics.semanticSimilarity * 100)}%`} />
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <SectionTitle icon={BarChart3} title="Backend Result Metrics" subtitle="Averages computed only from real experiment result rows." />
+                <div className="grid grid-cols-2 gap-2 text-right">
+                  <MiniStat label="Avg latency" value={`${currentMetrics.avgLatencyMs} ms`} />
+                  <MiniStat label="Avg cost" value={`$${currentMetrics.avgCost}`} />
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <ScoreStat label="Faithfulness" value={currentMetrics.faithfulness} />
+                <ScoreStat label="Answer relevance" value={currentMetrics.answerRelevance} />
+                <ScoreStat label="Context precision" value={currentMetrics.contextPrecision} />
+                <ScoreStat label="Context recall" value={currentMetrics.contextRecall} />
+                <ScoreStat label="Answer correctness" value={currentMetrics.answerCorrectness} />
+                <ScoreStat label="Semantic similarity" value={currentMetrics.semanticSimilarity} />
               </div>
             </Panel>
           ) : null}
@@ -458,14 +485,14 @@ export function AdminResearchDashboardPage() {
             <DataTable
               columns={['Question', 'Generated Answer', 'Faithfulness', 'Relevance', 'Latency', 'Status']}
               rows={results.map((result, index) => [
-                <div className="max-w-xs truncate font-black text-slate-800" key="question">Q{index + 1}: {result.evaluationQuestionId ?? 'Backend question'}</div>,
-                <div className="max-w-md line-clamp-2" key="answer">{result.generatedAnswer || 'No generated answer returned.'}</div>,
-                `${Math.round((result.faithfulness ?? 0) * 100)}%`,
-                `${Math.round((result.answerRelevance ?? 0) * 100)}%`,
-                `${result.latencyMs ?? 0} ms`,
+                <div className="max-w-xs truncate font-semibold text-slate-800" key="question">Q{index + 1}: {result.evaluationQuestionId ?? 'Backend question'}</div>,
+                <div className="max-w-md line-clamp-2 leading-6 text-slate-600" key="answer">{result.generatedAnswer || 'No generated answer returned.'}</div>,
+                <span className="font-semibold text-slate-800" key="faithfulness">{Math.round((result.faithfulness ?? 0) * 100)}%</span>,
+                <span className="font-semibold text-slate-800" key="relevance">{Math.round((result.answerRelevance ?? 0) * 100)}%</span>,
+                <span className="text-slate-600" key="latency">{result.latencyMs ?? 0} ms</span>,
                 result.errorMessage
-                  ? <span className="font-bold text-red-600" key="error">{result.errorMessage}</span>
-                  : <span className="font-bold text-emerald-700" key="ok">Success</span>,
+                  ? <span className="font-semibold text-red-600" key="error">{result.errorMessage}</span>
+                  : <span className="font-semibold text-emerald-700" key="ok">Success</span>,
               ])}
             />
           ) : (
@@ -499,14 +526,15 @@ function Toolbar({ children }) {
 
 function MetricCard({ icon: Icon, label, value }) {
   return (
-    <Panel className="p-4">
-      <div className="flex items-center justify-between">
-        <div className="grid size-11 place-items-center rounded-lg bg-teal-50 text-primary">
+    <Panel className="overflow-hidden p-4">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-teal-100/45 to-transparent" />
+      <div className="relative flex items-center justify-between gap-4">
+        <div className="grid size-11 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50 text-primary shadow-sm">
           <Icon size={19} />
         </div>
-        <p className="text-4xl font-black">{value}</p>
+        <p className="truncate text-3xl font-black tracking-tight text-slate-950">{value}</p>
       </div>
-      <p className="mt-4 text-xs font-black uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="relative mt-4 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
     </Panel>
   )
 }
@@ -514,12 +542,12 @@ function MetricCard({ icon: Icon, label, value }) {
 function SectionTitle({ icon: Icon, subtitle, title }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary">
+      <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50 text-primary shadow-sm">
         <Icon size={18} />
       </div>
-      <div>
+      <div className="min-w-0">
         <h2 className="text-lg font-black tracking-tight">{title}</h2>
-        <p className="text-sm font-semibold text-slate-500">{subtitle}</p>
+        <p className="text-sm font-medium leading-6 text-slate-500">{subtitle}</p>
       </div>
     </div>
   )
@@ -527,9 +555,28 @@ function SectionTitle({ icon: Icon, subtitle, title }) {
 
 function MiniStat({ label, value }) {
   return (
-    <div className="rounded-lg bg-white/72 p-4">
-      <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-400">{label}</p>
-      <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
+    <div className="rounded-xl border border-white/80 bg-white/72 px-4 py-3 shadow-[0_12px_28px_rgba(15,118,110,.06)]">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
+      <p className="mt-1 text-xl font-black text-slate-950">{value}</p>
+    </div>
+  )
+}
+
+function ScoreStat({ label, value }) {
+  const percent = Math.round((value ?? 0) * 100)
+
+  return (
+    <div className="rounded-xl border border-white/80 bg-white/72 p-4 shadow-[0_12px_28px_rgba(15,118,110,.06)]">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-slate-700">{label}</p>
+        <p className="text-sm font-black text-slate-950">{percent}%</p>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-500"
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
+      </div>
     </div>
   )
 }
@@ -539,15 +586,15 @@ function DataTable({ columns, rows }) {
     <Panel className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-          <thead className="bg-white/52 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+          <thead className="bg-white/62 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
             <tr>
-              {columns.map((column) => <th className="border-b border-slate-200 px-4 py-3" key={column}>{column}</th>)}
+              {columns.map((column) => <th className="border-b border-slate-200 px-4 py-3.5" key={column}>{column}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((row, index) => (
-              <tr className="bg-white/58 transition hover:bg-teal-50/70" key={index}>
-                {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top text-slate-700" key={cellIndex}>{cell}</td>)}
+              <tr className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65" key={index}>
+                {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top leading-6 text-slate-700" key={cellIndex}>{cell}</td>)}
               </tr>
             ))}
           </tbody>
@@ -564,16 +611,16 @@ function RowActions({ children }) {
 function Identity({ subtitle, title }) {
   return (
     <div className="min-w-0">
-      <p className="font-black text-slate-950">{title}</p>
-      <p className="text-xs font-semibold text-slate-500">{subtitle}</p>
+      <p className="font-semibold text-slate-950">{title}</p>
+      <p className="text-xs font-medium text-slate-500">{subtitle}</p>
     </div>
   )
 }
 
 function Loading({ label }) {
-  return <Panel className="flex min-h-40 items-center justify-center gap-3 p-5 text-sm font-black text-slate-600"><Loader2 className="animate-spin text-primary" size={20} />{label}</Panel>
+  return <Panel className="flex min-h-40 items-center justify-center gap-3 p-5 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-primary" size={20} />{label}</Panel>
 }
 
 function Alert({ message }) {
-  return <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700"><AlertTriangle className="mt-0.5 shrink-0" size={17} />{message}</div>
+  return <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700"><AlertTriangle className="mt-0.5 shrink-0" size={17} />{message}</div>
 }

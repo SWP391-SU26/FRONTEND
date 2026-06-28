@@ -335,7 +335,7 @@ export function AdminTestSetPage() {
       {notice ? <Notice message={notice} /> : null}
 
       {loading ? <Loading label="Loading Workflow 5 data" /> : (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <Toolbar>
             <SelectField
               label="Select dataset"
@@ -361,17 +361,20 @@ export function AdminTestSetPage() {
             </SelectField>
           </Toolbar>
 
-          <div className="grid gap-4 lg:grid-cols-[1fr_0.75fr]">
-            <Panel className="p-5">
-              <SectionTitle
-                icon={FileText}
-                subtitle={selectedDataset ? `Dataset ID: ${selectedDataset.id}` : 'Select or create a dataset first.'}
-                title={selectedDataset?.name || 'No dataset selected'}
-              />
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <MiniStat label="Questions" value={questions.length} />
-                <MiniStat label="Experiments" value={selectedDatasetExperiments.length} />
-                <MiniStat label="Files" value={fineTuningFiles.length} />
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+            <Panel className="overflow-hidden p-5">
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-0 h-24 bg-gradient-to-r from-teal-100/45 via-white/20 to-transparent" />
+              <div className="relative z-10">
+                <SectionTitle
+                  icon={FileText}
+                  subtitle={selectedDataset ? `Dataset ID: ${selectedDataset.id}` : 'Select or create a dataset first.'}
+                  title={selectedDataset?.name || 'No dataset selected'}
+                />
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
+                  <MiniStat label="Questions" value={questions.length} />
+                  <MiniStat label="Experiments" value={selectedDatasetExperiments.length} />
+                  <MiniStat label="Files" value={fineTuningFiles.length} />
+                </div>
               </div>
             </Panel>
 
@@ -386,13 +389,13 @@ export function AdminTestSetPage() {
                   <RefreshCcw size={16} />
                 </IconButton>
               </div>
-              <div className="mt-4 space-y-2">
+              <div className="mt-4 max-h-40 space-y-2 overflow-y-auto pr-1">
                 {fineTuningFiles.length ? fineTuningFiles.map((file) => (
-                  <p className="truncate rounded-lg border border-slate-100 bg-white/70 px-3 py-2 text-xs font-bold text-slate-700" key={file}>
+                  <p className="truncate rounded-lg border border-slate-100 bg-white/72 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm" key={file}>
                     {file}
                   </p>
                 )) : (
-                  <p className="text-sm font-semibold text-slate-500">The backend returned no fine-tuning files.</p>
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-white/50 px-3 py-4 text-sm font-medium leading-6 text-slate-500">The backend returned no fine-tuning files.</p>
                 )}
               </div>
             </Panel>
@@ -420,11 +423,17 @@ export function AdminTestSetPage() {
           )}
 
           <Panel className="p-5">
-            <SectionTitle
-              icon={FlaskConical}
-              subtitle="Records loaded from the evaluation and fine-tuning experiment APIs."
-              title="Experiment Records"
-            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SectionTitle
+                icon={FlaskConical}
+                subtitle="Records loaded from the evaluation and fine-tuning experiment APIs."
+                title="Experiment Records"
+              />
+              <Button disabled={!selectedDatasetId} onClick={() => setShowExperiment(true)} size="sm" variant="secondary">
+                <Plus size={14} />
+                New record
+              </Button>
+            </div>
             <div className="mt-4">
               {selectedDatasetExperiments.length ? (
                 <DataTable
@@ -447,7 +456,7 @@ export function AdminTestSetPage() {
                   ])}
                 />
               ) : (
-                <p className="text-sm font-semibold text-slate-500">No experiment records were returned for this dataset.</p>
+                <p className="rounded-lg border border-dashed border-slate-200 bg-white/50 px-3 py-4 text-sm font-medium leading-6 text-slate-500">No experiment records were returned for this dataset.</p>
               )}
             </div>
           </Panel>
@@ -561,8 +570,8 @@ function CrudPage({ actions, children, description, icon, title }) {
 
 function Toolbar({ children }) {
   return (
-    <Panel className="mb-4 p-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{children}</div>
+    <Panel className="mb-5 overflow-visible p-4">
+      <div className="grid gap-3 md:grid-cols-2">{children}</div>
     </Panel>
   )
 }
@@ -572,15 +581,21 @@ function DataTable({ columns, rows }) {
     <Panel className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[920px] border-collapse text-left text-sm">
-          <thead className="bg-white/52 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+          <thead className="bg-white/62 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
             <tr>
-              {columns.map((column) => <th className="border-b border-slate-200 px-4 py-3" key={column}>{column}</th>)}
+              {columns.map((column) => <th className="border-b border-slate-200 px-4 py-3.5" key={column}>{column}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((row, index) => (
-              <motion.tr className="bg-white/58 transition hover:bg-teal-50/70" key={index} whileHover={{ scale: 1.002 }}>
-                {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top text-slate-700" key={cellIndex}>{cell}</td>)}
+              <motion.tr
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65"
+                initial={{ opacity: 0, y: 8 }}
+                key={index}
+                transition={{ delay: index * 0.025, duration: 0.22 }}
+              >
+                {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top leading-6 text-slate-700" key={cellIndex}>{cell}</td>)}
               </motion.tr>
             ))}
           </tbody>
@@ -610,10 +625,10 @@ function DrawerModal({ children, onClose, title }) {
 
 function TextInput({ label, onChange, value, ...props }) {
   return (
-    <label className="block text-sm font-black text-slate-700">
+    <label className="block text-sm font-semibold text-slate-700">
       {label}
       <input
-        className="mt-1 h-11 w-full rounded-xl border border-border px-3 text-sm font-semibold text-slate-900 outline-none focus:border-teal-400"
+        className="mt-1 h-11 w-full rounded-xl border border-border bg-white/90 px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
         onChange={(event) => onChange(event.target.value)}
         type="text"
         value={value}
@@ -625,10 +640,10 @@ function TextInput({ label, onChange, value, ...props }) {
 
 function TextArea({ label, onChange, value, ...props }) {
   return (
-    <label className="block text-sm font-black text-slate-700">
+    <label className="block text-sm font-semibold text-slate-700">
       {label}
       <textarea
-        className="mt-1 min-h-24 w-full rounded-xl border border-border p-3 text-sm font-semibold text-slate-900 outline-none focus:border-teal-400"
+        className="mt-1 min-h-24 w-full rounded-xl border border-border bg-white/90 p-3 text-sm font-medium leading-6 text-slate-900 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
         onChange={(event) => onChange(event.target.value)}
         value={value}
         {...props}
@@ -639,10 +654,10 @@ function TextArea({ label, onChange, value, ...props }) {
 
 function LabeledSelect({ children, label, onChange, value, ...props }) {
   return (
-    <label className="block text-sm font-black text-slate-700">
+    <label className="block text-sm font-semibold text-slate-700">
       {label}
       <select
-        className="mt-1 h-11 w-full rounded-xl border border-border bg-white px-3 text-sm font-black text-slate-900 outline-none focus:border-teal-400"
+        className="mt-1 h-11 w-full rounded-xl border border-border bg-white/90 px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
         onChange={(event) => onChange(event.target.value)}
         value={value}
         {...props}
@@ -656,12 +671,12 @@ function LabeledSelect({ children, label, onChange, value, ...props }) {
 function SectionTitle({ icon: Icon, subtitle, title }) {
   return (
     <div className="flex items-start gap-3">
-      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-primary">
+      <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50 text-primary shadow-sm">
         <Icon size={18} />
       </div>
       <div className="min-w-0">
         <h2 className="truncate text-lg font-black tracking-tight">{title}</h2>
-        <p className="text-sm font-semibold text-slate-500">{subtitle}</p>
+        <p className="text-sm font-medium leading-6 text-slate-500">{subtitle}</p>
       </div>
     </div>
   )
@@ -669,23 +684,23 @@ function SectionTitle({ icon: Icon, subtitle, title }) {
 
 function MiniStat({ label, value }) {
   return (
-    <div className="rounded-lg bg-white/72 p-4">
-      <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-400">{label}</p>
+    <div className="rounded-xl border border-white/80 bg-white/72 p-4 shadow-[0_12px_28px_rgba(15,118,110,.06)]">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
       <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
     </div>
   )
 }
 
 function Loading({ label }) {
-  return <Panel className="flex min-h-40 items-center justify-center gap-3 p-5 text-sm font-black text-slate-600"><Loader2 className="animate-spin text-primary" size={20} />{label}</Panel>
+  return <Panel className="flex min-h-40 items-center justify-center gap-3 p-5 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-primary" size={20} />{label}</Panel>
 }
 
 function Alert({ message }) {
-  return <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{message}</div>
+  return <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{message}</div>
 }
 
 function Notice({ message }) {
-  return <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm font-bold text-teal-800">{message}</div>
+  return <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm font-semibold text-teal-800">{message}</div>
 }
 
 function statusForBadge(status) {

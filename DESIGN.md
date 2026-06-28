@@ -38,6 +38,7 @@ FStu uses HSL CSS variables in [index.css](D:/SWP/FRONTEND/src/styles/index.css)
 Brand rule:
 
 - Keep the academic teal/green theme.
+- Header logo assets should render without a white container pill when the PNG already has transparency.
 - Do not introduce unrelated section palettes like purple, amber, cyan, or indigo as dominant themes.
 - Sections may alternate between light surfaces and soft green/teal surfaces.
 - CTA color remains `primary`.
@@ -174,14 +175,37 @@ Current route:
 Library redesign direction:
 
 - Uses the existing Manrope family for the Library surface to keep typography consistent across the app.
+- Library heading rhythm should match AI Chat: small uppercase eyebrow, `text-3xl`/`sm:text-4xl` `font-black` title, and `text-sm font-semibold` supporting copy.
 - Keeps the teal/green academic brand and glassy workspace panels.
 - Filter toolbar uses custom animated dropdowns instead of native selects for Course, File type, and Status.
+- Filter dropdown labels and selected values should use medium/semibold weights, not `font-black`, so controls stay calm and readable.
 - Filter menus open with a restrained downward roll/slide animation, staggered option reveal, rotating chevron, and teal active state.
 - Library typography avoids blanket heavy weights while preserving bold emphasis for page title, metric values, document names, and primary actions.
 - Document stats and cards animate with lightweight transform/opacity transitions.
 - Document card hover stays subtle without tilt or table-row scaling, preserving readable document management UI.
 - Filter dropdowns must sit above document cards and tables when opened.
 - Document tables should keep a light bottom gap so the final panel never feels attached to the viewport/footer.
+
+## 8.2 Admin Test Set And Research Design
+
+Current routes:
+
+```text
+/admin/test-set
+/admin/research-dashboard
+```
+
+Admin workspace direction:
+
+- Keep the same Manrope typography and teal academic identity as AI Chat and Library.
+- Page titles, metric values, and primary section titles may use heavy weight for hierarchy.
+- Filters, selects, form labels, status badges, table headings, and helper text should use medium/semibold weights instead of blanket `font-black`.
+- Admin controls should feel operational and calm: clear spacing, strong focus rings, no crowded toolbar rows.
+- Test Set uses a dataset summary area with concise stats, a contained fine-tuning file list, and readable tables with subtle row hover.
+- Decorative gradients inside admin panels must stay behind content with explicit stacking (`z-0` background, `relative z-10` content) so dataset titles and labels never look washed out.
+- Research uses a clear experiment selector panel, visible experiment metadata, summary metric cards, and score bars for evaluation metrics.
+- Tables should animate or respond only through opacity/color/position transitions; avoid hover scaling on table rows because it makes data grids feel unstable.
+- Empty and loading states should preserve page rhythm with enough vertical space and clear English copy.
 
 ## 9. Component Rules
 

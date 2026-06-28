@@ -107,7 +107,7 @@ export function StatusBadge({ status }) {
   return (
     <motion.span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-black shadow-sm',
+        'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-semibold shadow-sm',
         statusStyles[status] ?? 'border-slate-200 bg-slate-50 text-slate-600',
       )}
       initial={{ scale: 0.94, opacity: 0 }}
@@ -137,7 +137,7 @@ export function SelectField({ label, children, ...props }) {
   return (
     <label className="flex min-h-11 items-center rounded-xl border border-border bg-white/90 px-3 text-sm text-slate-600 shadow-[0_10px_24px_rgba(15,118,110,.06)] backdrop-blur-xl transition focus-within:border-teal-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-teal-100">
       <span className="sr-only">{label}</span>
-      <select className="w-full bg-transparent text-sm font-black outline-none" {...props}>
+      <select className="w-full bg-transparent text-sm font-semibold outline-none" {...props}>
         {children}
       </select>
     </label>
