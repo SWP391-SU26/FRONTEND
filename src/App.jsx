@@ -17,16 +17,22 @@ import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import WorkspacePage from './pages/WorkspacePage.jsx'
 import CourseManagementPage from './pages/admin/CourseManagementPage.jsx'
+import {
+  getDefaultRouteForUser,
+  getSavedUser,
+  isAdminSession,
+  isAuthenticated,
+} from './services/authService.js'
 
 function App() {
   return (
     <Routes>
       <Route element={<LandingPage />} path="/" />
-      <Route element={<LoginPage />} path="/login" />
-      <Route element={<RegisterPage />} path="/register" />
-      <Route element={<SettingsPage />} path="/settings" />
-      <Route element={<SettingsPage />} path="/profile" />
-      <Route element={<AdminLayout />} path="/admin">
+      <Route element={<PublicOnly><LoginPage /></PublicOnly>} path="/login" />
+      <Route element={<PublicOnly><RegisterPage /></PublicOnly>} path="/register" />
+      <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/settings" />
+      <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/profile" />
+      <Route element={<RequireAdmin><AdminLayout /></RequireAdmin>} path="/admin">
         <Route index element={<Navigate replace to="/admin/dashboard" />} />
         <Route path="dashboard" element={<AdminDashboardPage />} />
         <Route path="users" element={<AdminUsersPage />} />
@@ -41,7 +47,7 @@ function App() {
         <Route path="experiments" element={<Navigate replace to="/admin/research-dashboard" />} />
         <Route path="logs" element={<Navigate replace to="/admin/research-dashboard" />} />
       </Route>
-      <Route element={<MainLayout />}>
+      <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
         <Route element={<Navigate replace to="/workspace" />} path="/app" />
         <Route element={<WorkspacePage />} path="/workspace" />
         <Route element={<Navigate replace to="/workspace" />} path="/chat" />
@@ -51,6 +57,34 @@ function App() {
       </Route>
     </Routes>
   )
+}
+
+function PublicOnly({ children }) {
+  if (isAuthenticated()) {
+    return <Navigate replace to={getDefaultRouteForUser(getSavedUser())} />
+  }
+
+  return children
+}
+
+function RequireAuth({ children }) {
+  if (!isAuthenticated()) {
+    return <Navigate replace to="/login" />
+  }
+
+  return children
+}
+
+function RequireAdmin({ children }) {
+  if (!isAuthenticated()) {
+    return <Navigate replace to="/login" />
+  }
+
+  if (!isAdminSession()) {
+    return <Navigate replace to="/workspace" />
+  }
+
+  return children
 }
 
 export default App

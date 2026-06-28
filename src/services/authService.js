@@ -53,7 +53,11 @@ export function deleteUser(userId) {
 }
 
 export function saveSession(session) {
-  localStorage.setItem('fstu_access_token', session.accessToken)
+  if (session.accessToken) {
+    localStorage.setItem('fstu_access_token', session.accessToken)
+  } else {
+    localStorage.removeItem('fstu_access_token')
+  }
   localStorage.setItem('fstu_user', JSON.stringify(session.user))
 }
 
@@ -72,25 +76,40 @@ export function getSavedUser() {
 }
 
 export function isAuthenticated() {
-  return Boolean(localStorage.getItem('fstu_access_token') && getSavedUser()?.id)
+  return Boolean(getSavedUser()?.id)
 }
 
 export function isAdminSession() {
-  return isAuthenticated() && getSavedUser()?.role === 'admin'
+  return hasRole(getSavedUser(), 'ADMIN')
+}
+
+export function hasRole(user, roleName) {
+  const expected = roleName?.toUpperCase()
+  return Boolean(user?.roles?.some((role) => role?.toUpperCase() === expected))
+}
+
+export function getDefaultRouteForUser(user) {
+  return hasRole(user, 'ADMIN') ? '/admin/dashboard' : '/workspace'
 }
 
 function toSession(auth) {
-  const roles = auth.user.roles ?? []
-  const isAdmin = roles.some((role) => role?.toUpperCase() === 'ADMIN')
+  const rawUser = auth?.user ?? auth
+  const roles = normalizeRoles(rawUser?.roles)
+  const primaryRole = roles[0] ?? 'STUDENT'
 
   return {
-    accessToken: auth.token,
+    accessToken: auth?.token ?? auth?.accessToken ?? '',
     user: {
-      id: auth.user.userId,
-      email: auth.user.email,
-      name: auth.user.fullName,
-      role: isAdmin ? 'admin' : 'user',
+      id: rawUser?.userId ?? rawUser?.id,
+      email: rawUser?.email ?? '',
+      name: rawUser?.fullName ?? rawUser?.name ?? 'FStu User',
+      role: primaryRole.toLowerCase(),
       roles,
     },
   }
+}
+
+function normalizeRoles(roles) {
+  if (!Array.isArray(roles) || roles.length === 0) return ['STUDENT']
+  return roles.map((role) => String(role).toUpperCase())
 }

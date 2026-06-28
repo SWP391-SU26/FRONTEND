@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
-import { getSavedUser, clearSession, logout, isAdminSession } from '../services/authService.js'
+import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated } from '../services/authService.js'
 
 const adminNav = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
@@ -27,6 +27,7 @@ const adminNav = [
 function AdminLayout() {
   const navigate = useNavigate()
   const user = getSavedUser()
+  const initials = getInitials(user?.name)
 
   function handleLogout() {
     if (user?.id) {
@@ -37,7 +38,7 @@ function AdminLayout() {
   }
 
   if (!isAdminSession()) {
-    return <Navigate replace to="/workspace" />
+    return <Navigate replace to={isAuthenticated() ? '/workspace' : '/login'} />
   }
 
   return (
@@ -121,7 +122,7 @@ function AdminLayout() {
                 <LogOut size={16} />
               </button>
               <div className="grid size-10 place-items-center rounded-full bg-primary text-xs font-black text-white">
-                AD
+                {initials}
               </div>
             </div>
           </header>
@@ -133,6 +134,12 @@ function AdminLayout() {
       </div>
     </div>
   )
+}
+
+function getInitials(name = '') {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 'A'
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join('')
 }
 
 export function AdminPageHeader({ actions, description, icon: Icon = Brain, title }) {

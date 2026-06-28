@@ -19,6 +19,7 @@ const navItems = [
 function MainLayout() {
   const navigate = useNavigate()
   const user = getSavedUser()
+  const initials = getInitials(user?.name)
 
   function handleLogout() {
     if (user?.id) {
@@ -112,7 +113,7 @@ function MainLayout() {
               whileHover={{ y: -2, scale: 1.04 }}
               whileTap={{ scale: 0.96 }}
             >
-              FS
+              {initials}
             </motion.button>
             <motion.button
               aria-label="Log out"
@@ -147,6 +148,12 @@ function QuickIcon({ children, label }) {
       {children}
     </motion.button>
   )
+}
+
+function getInitials(name = '') {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return 'U'
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join('')
 }
 
 export default MainLayout

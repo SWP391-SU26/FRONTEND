@@ -45,7 +45,7 @@ import { cn } from '../utils/cn.js'
 
 const allOption = 'All'
 const fileTypes = [allOption, 'PDF', 'DOCX', 'PPTX', 'TXT']
-const statuses = [allOption, 'Uploaded', 'Processing', 'Indexed', 'Failed']
+const statuses = [allOption, 'Uploaded', 'Processing', 'Processed', 'Indexed', 'Failed']
 
 // ─── File type colour helpers ────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ function LibraryPage() {
   const [viewMode, setViewMode] = useState('bento')
   const [docToDelete, setDocToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
-  const [reindexingIds, setReindexingIds] = useState(new Set()) // doc IDs currently re-indexing
+  const [reindexingIds, setReindexingIds] = useState(new Set()) // doc IDs currently preparing embeddings
 
   // Filters
   const [query, setQuery] = useState('')
@@ -137,7 +137,7 @@ function LibraryPage() {
               subject: workspace?.name ?? doc.subject,
               courseName: course?.name ?? '',
               chunks: chunks.length,
-              embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not embedded',
+              embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not prepared',
             }
           }),
         )
@@ -169,6 +169,27 @@ function LibraryPage() {
     })
   }, [docs, query, filterCourseId, filterType, filterStatus])
 
+  const courseFilterOptions = useMemo(
+    () => [
+      { label: 'All courses', value: allOption },
+      ...courses.map((course) => ({
+        label: `${course.code} - ${course.name}`,
+        value: course.id,
+      })),
+    ],
+    [courses],
+  )
+
+  const fileTypeFilterOptions = useMemo(
+    () => fileTypes.map((item) => ({ label: item === allOption ? 'All file types' : item, value: item })),
+    [],
+  )
+
+  const statusFilterOptions = useMemo(
+    () => statuses.map((item) => ({ label: item === allOption ? 'All statuses' : item, value: item })),
+    [],
+  )
+
   function resetFilters() {
     setQuery('')
     setFilterCourseId(allOption)
@@ -197,16 +218,15 @@ function LibraryPage() {
     setDocs((curr) => [...newDocs, ...curr])
   }
 
-  // Re-index: call real API
+  // Prepare embeddings: call the RAG preparation API without changing extraction status.
   async function handleReindex(doc) {
     if (reindexingIds.has(doc.id)) return
     setReindexingIds((prev) => new Set([...prev, doc.id]))
     setError('')
 
     try {
-      // Mark as Processing immediately
       setDocs((curr) =>
-        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Processing' } : d)),
+        curr.map((d) => (d.id === doc.id ? { ...d, embeddingStatus: 'Preparing' } : d)),
       )
 
       const model = await getActiveEmbeddingModel()
@@ -219,7 +239,7 @@ function LibraryPage() {
           d.id === doc.id
             ? {
                 ...d,
-                status: 'Indexed',
+                embeddingStatus: 'Prepared',
                 chunks: result?.totalChunks ?? result?.createdEmbeddings ?? d.chunks,
                 embeddingModel: model.modelName,
               }
@@ -227,9 +247,9 @@ function LibraryPage() {
         ),
       )
     } catch (err) {
-      setError(`Re-index failed for "${doc.displayName}": ${err.message}`)
+      setError(`Embedding preparation failed for "${doc.displayName}": ${err.message}`)
       setDocs((curr) =>
-        curr.map((d) => (d.id === doc.id ? { ...d, status: 'Failed' } : d)),
+        curr.map((d) => (d.id === doc.id ? { ...d, embeddingStatus: 'Not prepared' } : d)),
       )
     } finally {
       setReindexingIds((prev) => {
@@ -241,26 +261,26 @@ function LibraryPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="library-page space-y-4 pb-10">
       {/* ── Hero Header ──────────────────────────────────────────────────── */}
-      <Panel className="overflow-hidden p-5">
+      <Panel className="library-hero-panel overflow-hidden p-5">
         <div className="pointer-events-none absolute inset-0 opacity-60">
           <div className="abstract-canvas" />
         </div>
         <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2">
-              <div className="grid size-10 place-items-center rounded-xl bg-teal-500 text-white shadow-lg shadow-teal-200">
-                <BookOpen size={20} />
+              <div className="grid size-9 place-items-center rounded-xl bg-teal-500 text-white shadow-md shadow-teal-200">
+                <BookOpen size={18} />
               </div>
-              <span className="text-xs font-black uppercase tracking-[0.16em] text-teal-600">
+              <span className="text-xs font-bold uppercase tracking-[0.14em] text-teal-600">
                 Knowledge Base
               </span>
             </div>
-            <h1 className="text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
+            <h1 className="library-hero-title text-4xl font-extrabold leading-tight text-slate-950 sm:text-5xl">
               Library
             </h1>
-            <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
+            <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-slate-600">
               Upload, manage and index course documents for AI-powered Q&A.
             </p>
           </div>
@@ -313,8 +333,8 @@ function LibraryPage() {
           <StatCard icon={FileText} label="Documents" value={docs.length} />
           <StatCard
             icon={Database}
-            label="Indexed"
-            value={docs.filter((d) => d.status === 'Indexed').length}
+            label="Prepared"
+            value={docs.filter((d) => d.embeddingStatus === 'Prepared').length}
           />
           <StatCard
             icon={Layers}
@@ -325,8 +345,23 @@ function LibraryPage() {
       </Panel>
 
       {/* ── Filter Toolbar ────────────────────────────────────────────────── */}
-      <Panel className="p-3 sm:p-4">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr_auto]">
+      <Panel className="library-filter-panel relative z-30 p-3 sm:p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-700">
+            <Filter size={15} />
+            Filters
+          </div>
+          <motion.span
+            className="hidden rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-primary sm:inline-flex"
+            key={filteredDocs.length}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22 }}
+          >
+            {filteredDocs.length} visible
+          </motion.span>
+        </div>
+        <div className="relative z-10 grid gap-3 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr_auto]">
           <Field
             icon={Search}
             label="Search documents"
@@ -335,39 +370,26 @@ function LibraryPage() {
             value={query}
           />
 
-          {/* Course filter */}
-          <SelectField
+          <AnimatedFilterSelect
             label="Course"
-            onChange={(e) => setFilterCourseId(e.target.value)}
+            onChange={setFilterCourseId}
+            options={courseFilterOptions}
             value={filterCourseId}
-          >
-            <option value={allOption}>All courses</option>
-            {courses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.code} — {c.name}
-              </option>
-            ))}
-          </SelectField>
+          />
 
-          <SelectField
+          <AnimatedFilterSelect
             label="File type"
-            onChange={(e) => setFilterType(e.target.value)}
+            onChange={setFilterType}
+            options={fileTypeFilterOptions}
             value={filterType}
-          >
-            {fileTypes.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </SelectField>
+          />
 
-          <SelectField
+          <AnimatedFilterSelect
             label="Status"
-            onChange={(e) => setFilterStatus(e.target.value)}
+            onChange={setFilterStatus}
+            options={statusFilterOptions}
             value={filterStatus}
-          >
-            {statuses.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </SelectField>
+          />
 
           {/* View toggle */}
           <div className="flex rounded-lg bg-white/72 p-1 shadow-inner">
@@ -398,30 +420,34 @@ function LibraryPage() {
       </Panel>
 
       {/* ── Content area ─────────────────────────────────────────────────── */}
-      {!loading && docs.length === 0 ? (
-        <EmptyUploadZone
-          hasWorkspace={!!activeWorkspaceId}
-          onUpload={() => setShowUploadModal(true)}
-        />
-      ) : !loading && filteredDocs.length === 0 ? (
-        <EmptyState
-          action={
-            <Button onClick={resetFilters} variant="secondary">
-              Clear filters
-            </Button>
-          }
-          description="No documents match the current filters."
-          title="No matching documents"
-        />
-      ) : viewMode === 'bento' ? (
-        <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
-      ) : (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
-      )}
+      <div className="relative z-0">
+        {!loading && docs.length === 0 ? (
+          <EmptyUploadZone
+            hasWorkspace={!!activeWorkspaceId}
+            onUpload={() => setShowUploadModal(true)}
+          />
+        ) : !loading && filteredDocs.length === 0 ? (
+          <EmptyState
+            action={
+              <Button onClick={resetFilters} variant="secondary">
+                Clear filters
+              </Button>
+            }
+            description="No documents match the current filters."
+            title="No matching documents"
+          />
+        ) : viewMode === 'bento' ? (
+          <DocumentCards docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
+        ) : (
+          <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} />
+        )}
+      </div>
 
       {/* Compact table always under bento */}
       {viewMode === 'bento' && filteredDocs.length > 0 ? (
-        <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} compact />
+        <div className="relative z-0">
+          <DocumentTable docs={filteredDocs} onDelete={setDocToDelete} onReindex={handleReindex} reindexingIds={reindexingIds} compact />
+        </div>
       ) : null}
 
       {/* ── Delete confirm ────────────────────────────────────────────────── */}
@@ -466,7 +492,7 @@ function EmptyUploadZone({ hasWorkspace, onUpload }) {
         <FilePlus2 size={36} />
       </div>
       <div>
-        <h2 className="text-xl font-black tracking-tight text-slate-900">No documents yet</h2>
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">No documents yet</h2>
         <p className="mt-2 max-w-sm text-sm font-semibold text-slate-500">
           {hasWorkspace
             ? 'Upload PDF, DOCX, PPTX, or TXT files to start indexing documents for AI-powered Q&A.'
@@ -480,6 +506,99 @@ function EmptyUploadZone({ hasWorkspace, onUpload }) {
         </Button>
       ) : null}
     </motion.div>
+  )
+}
+
+function AnimatedFilterSelect({ label, onChange, options, value }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const selected = options.find((option) => option.value === value) ?? options[0]
+
+  function handleBlur(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsOpen(false)
+    }
+  }
+
+  return (
+    <div className={cn('relative', isOpen ? 'z-50' : 'z-20')} onBlur={handleBlur}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="library-filter-select flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-border bg-white/90 px-3 text-left text-sm text-slate-700 backdrop-blur-xl transition hover:border-teal-200 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500"
+        onClick={() => setIsOpen((open) => !open)}
+        type="button"
+      >
+        <span className="min-w-0">
+          <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+            {label}
+          </span>
+          <span className="block truncate font-semibold text-slate-900">
+            {selected?.label ?? label}
+          </span>
+        </span>
+        <motion.span
+          animate={{ rotate: isOpen ? 180 : 0 }}
+          transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+        >
+          <ChevronDown size={16} />
+        </motion.span>
+      </button>
+
+      <AnimatePresence>
+        {isOpen ? (
+          <motion.div
+            className="library-filter-menu absolute left-0 right-0 top-[calc(100%+8px)] z-[80] max-h-72 overflow-hidden rounded-xl border border-teal-100 bg-white/96 p-1 backdrop-blur-xl"
+            initial={{ opacity: 0, y: -8, scaleY: 0.9 }}
+            animate={{ opacity: 1, y: 0, scaleY: 1 }}
+            exit={{ opacity: 0, y: -6, scaleY: 0.94 }}
+            transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+          >
+            <motion.ul
+              animate="open"
+              className="max-h-64 overflow-y-auto py-1"
+              initial="closed"
+              role="listbox"
+              variants={{
+                closed: {},
+                open: { transition: { staggerChildren: 0.018, delayChildren: 0.03 } },
+              }}
+            >
+              {options.map((option) => {
+                const isSelected = option.value === value
+                return (
+                  <motion.li
+                    key={option.value}
+                    variants={{
+                      closed: { opacity: 0, y: -5 },
+                      open: { opacity: 1, y: 0 },
+                    }}
+                  >
+                    <button
+                      aria-selected={isSelected}
+                      className={cn(
+                        'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition',
+                        isSelected
+                          ? 'bg-teal-50 text-primary'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950',
+                      )}
+                      onClick={() => {
+                        onChange(option.value)
+                        setIsOpen(false)
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      <span className="truncate">{option.label}</span>
+                      {isSelected ? <span className="size-2 rounded-full bg-primary" /> : null}
+                    </button>
+                  </motion.li>
+                )
+              })}
+            </motion.ul>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
   )
 }
 
@@ -554,7 +673,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
           ...doc,
           subject: targetWorkspace?.name ?? doc.subject,
           chunks: chunks.length,
-          embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not embedded',
+          embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not prepared',
         })
       } catch (err) {
         setProgresses((prev) => ({ ...prev, [file.name]: -1 })) // -1 = error
@@ -590,7 +709,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
               <Upload size={18} />
             </div>
             <div>
-              <h2 className="text-lg font-black tracking-tight text-slate-950">
+              <h2 className="text-lg font-semibold tracking-tight text-slate-950">
                 Upload Documents
               </h2>
               <p className="text-xs font-semibold text-slate-500">PDF · DOCX · PPTX · TXT</p>
@@ -618,7 +737,7 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
             <Upload size={26} />
           </div>
           <div>
-            <p className="font-black text-slate-800">Drag & drop or click to browse</p>
+            <p className="font-semibold text-slate-800">Drag & drop or click to browse</p>
             <p className="mt-1 text-xs font-semibold text-slate-400">Max file types: PDF, DOCX, PPTX, TXT</p>
           </div>
         </div>
@@ -777,14 +896,22 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
 
 function StatCard({ icon: Icon, label, value }) {
   return (
-    <motion.div className="bento-card p-4" whileHover={{ y: -4 }}>
+    <motion.div className="bento-card p-4" whileHover={{ y: -2 }}>
       <div className="flex items-center justify-between">
         <div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary shadow-sm">
           <Icon size={17} />
         </div>
-        <p className="text-3xl font-black">{value}</p>
+        <motion.p
+          className="library-display-number text-3xl font-bold text-slate-950"
+          key={value}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22 }}
+        >
+          {value}
+        </motion.p>
       </div>
-      <p className="mt-3 text-xs font-black uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
     </motion.div>
   )
 }
@@ -793,25 +920,28 @@ function StatCard({ icon: Icon, label, value }) {
 
 function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() }) {
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {docs.map((doc, index) => {
-        const colors = fileTypeColors(doc.type)
-        const isReindexing = reindexingIds.has(doc.id)
-        return (
-          <motion.article
-            className="bento-card group p-4"
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.03, duration: 0.32 }}
-            key={doc.id}
-            whileHover={{ y: -6 }}
-            style={{ '--glow': 'rgba(20,184,166,0.12)' }}
-          >
+    <motion.div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" layout>
+      <AnimatePresence initial={false}>
+        {docs.map((doc, index) => {
+          const colors = fileTypeColors(doc.type)
+          const isReindexing = reindexingIds.has(doc.id)
+          return (
+            <motion.article
+              className="bento-card group p-4"
+              key={doc.id}
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              layout
+              transition={{ delay: index * 0.018, duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              whileHover={{ y: -3 }}
+              style={{ '--glow': 'rgba(20,184,166,0.12)' }}
+            >
             {/* Card header */}
             <div className="flex items-start gap-3">
               <div
                 className={cn(
-                  'grid size-11 shrink-0 place-items-center rounded-xl shadow-sm transition group-hover:scale-105',
+                  'grid size-11 shrink-0 place-items-center rounded-xl shadow-sm transition group-hover:scale-[1.02]',
                   colors.icon,
                   colors.text,
                 )}
@@ -819,8 +949,8 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
                 <FileText size={18} />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-black text-slate-950">{doc.displayName}</h2>
-                <p className="mt-0.5 truncate text-xs font-semibold text-slate-400">
+                <h2 className="truncate text-sm font-bold text-slate-950">{doc.displayName}</h2>
+                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">
                   {doc.subject}
                 </p>
               </div>
@@ -829,12 +959,13 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
 
             {/* Metadata chips */}
             <div className="mt-4 flex flex-wrap gap-1.5">
-              <span className={cn('rounded-md px-2 py-1 text-xs font-black', colors.bg, colors.text)}>
+              <span className={cn('rounded-md px-2 py-1 text-xs font-semibold', colors.bg, colors.text)}>
                 {doc.type}
               </span>
-              <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">
+              <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
                 {doc.chunks} chunks
               </span>
+              <StatusBadge status={doc.embeddingStatus} />
               {doc.pages > 0 ? (
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-500">
                   {doc.pages} pages
@@ -843,7 +974,7 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
             </div>
 
             {/* Uploaded at */}
-            <p className="mt-3 text-xs font-semibold text-slate-400">{doc.uploadedAt}</p>
+            <p className="mt-3 text-xs font-medium text-slate-400">{doc.uploadedAt}</p>
 
             {/* Action buttons */}
             <div className="mt-4 flex flex-wrap gap-2">
@@ -862,7 +993,7 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
                 <FileText size={15} />
               </IconButton>
               <IconButton
-                label={isReindexing ? 'Re-indexing…' : 'Re-index'}
+                label={isReindexing ? 'Preparing embeddings...' : 'Prepare embeddings'}
                 disabled={isReindexing}
                 onClick={() => onReindex(doc)}
                 className={isReindexing ? 'animate-spin text-teal-500' : ''}
@@ -873,10 +1004,11 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
                 <Trash2 size={15} />
               </IconButton>
             </div>
-          </motion.article>
-        )
-      })}
-    </div>
+            </motion.article>
+          )
+        })}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
@@ -884,10 +1016,10 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
 
 function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingIds = new Set() }) {
   return (
-    <Panel className={cn('overflow-hidden', compact ? 'hidden xl:block' : '')}>
+    <Panel className={cn('mb-8 overflow-hidden', compact ? 'hidden xl:block' : '')}>
       <div className="flex items-center justify-between border-b border-border p-4">
         <div>
-          <h2 className="text-lg font-black tracking-tight">All documents</h2>
+          <h2 className="text-lg font-bold tracking-tight">All documents</h2>
           <p className="text-sm font-semibold text-slate-500">
             {docs.length} document{docs.length !== 1 ? 's' : ''} in this workspace
           </p>
@@ -896,9 +1028,9 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-          <thead className="bg-white/52 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+          <thead className="bg-white/52 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
             <tr>
-              {['Document', 'Type', 'Workspace', 'Status', 'Chunks', 'Pages', 'Uploaded', 'Actions'].map(
+              {['Document', 'Type', 'Workspace', 'Status', 'Embeddings', 'Chunks', 'Pages', 'Uploaded', 'Actions'].map(
                 (h) => (
                   <th className="border-b border-slate-200 px-4 py-3" key={h}>
                     <span className="inline-flex items-center gap-1">
@@ -917,7 +1049,6 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                 <motion.tr
                   className="bg-white/70 transition hover:bg-teal-50/60"
                   key={doc.id}
-                  whileHover={{ scale: 1.002 }}
                 >
                   <td className="max-w-[240px] px-4 py-4">
                     <div className="flex items-center gap-3">
@@ -930,17 +1061,20 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                       >
                         <FileText size={15} />
                       </div>
-                      <p className="truncate font-black text-slate-950">{doc.displayName}</p>
+                      <p className="truncate font-bold text-slate-950">{doc.displayName}</p>
                     </div>
                   </td>
                   <td className="px-4 py-4">
-                    <span className={cn('rounded-md px-2 py-1 text-xs font-black', colors.bg, colors.text)}>
+                    <span className={cn('rounded-md px-2 py-1 text-xs font-semibold', colors.bg, colors.text)}>
                       {doc.type}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-slate-600">{doc.subject}</td>
                   <td className="px-4 py-4">
                     <StatusBadge status={doc.status} />
+                  </td>
+                  <td className="px-4 py-4">
+                    <StatusBadge status={doc.embeddingStatus} />
                   </td>
                   <td className="px-4 py-4 font-semibold text-slate-600">{doc.chunks}</td>
                   <td className="px-4 py-4 font-semibold text-slate-500">{doc.pages || '—'}</td>
@@ -965,7 +1099,7 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                         <FileText size={15} />
                       </IconButton>
                       <IconButton
-                        label={reindexingIds.has(doc.id) ? 'Re-indexing…' : 'Re-index'}
+                        label={reindexingIds.has(doc.id) ? 'Preparing embeddings...' : 'Prepare embeddings'}
                         disabled={reindexingIds.has(doc.id)}
                         onClick={() => onReindex(doc)}
                         className={reindexingIds.has(doc.id) ? 'animate-spin text-teal-500' : ''}

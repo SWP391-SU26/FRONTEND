@@ -4,7 +4,7 @@ import AuthAlert from '../components/auth/AuthAlert.jsx'
 import AuthInput from '../components/auth/AuthInput.jsx'
 import AuthShell from '../components/auth/AuthShell.jsx'
 import Button from '../components/common/Button.jsx'
-import { register, saveSession } from '../services/authService.js'
+import { getDefaultRouteForUser, register, saveSession } from '../services/authService.js'
 
 const benefits = [
   'Upload and index course files',
@@ -24,7 +24,6 @@ function RegisterPage() {
   const [form, setForm] = useState(initialForm)
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
-  const [successMessage, setSuccessMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   function handleChange(event) {
@@ -32,16 +31,11 @@ function RegisterPage() {
     setForm((currentForm) => ({ ...currentForm, [name]: value }))
     setErrors((currentErrors) => ({ ...currentErrors, [name]: '' }))
     setFormError('')
-    setSuccessMessage('')
   }
 
   function validateForm() {
     const nextErrors = {}
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    const hasUppercase = /[A-Z]/.test(form.password)
-    const hasLowercase = /[a-z]/.test(form.password)
-    const hasNumber = /\d/.test(form.password)
-
     if (!form.fullName.trim()) {
       nextErrors.fullName = 'Full name is required.'
     }
@@ -54,14 +48,8 @@ function RegisterPage() {
 
     if (!form.password) {
       nextErrors.password = 'Password is required.'
-    } else if (
-      form.password.length < 8 ||
-      !hasUppercase ||
-      !hasLowercase ||
-      !hasNumber
-    ) {
-      nextErrors.password =
-        'Use at least 8 characters with uppercase, lowercase, and a number.'
+    } else if (form.password.length < 6) {
+      nextErrors.password = 'Use at least 6 characters.'
     }
 
     if (!form.confirmPassword) {
@@ -83,15 +71,11 @@ function RegisterPage() {
 
     setIsLoading(true)
     setFormError('')
-    setSuccessMessage('')
 
     try {
       const session = await register(form)
       saveSession(session)
-      setSuccessMessage('Account created successfully. Redirecting...')
-      window.setTimeout(() => {
-        navigate(session.user.role === 'admin' ? '/admin' : '/app')
-      }, 500)
+      navigate(getDefaultRouteForUser(session.user))
     } catch (error) {
       setFormError(error.message)
     } finally {
@@ -119,10 +103,6 @@ function RegisterPage() {
 
       <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
         {formError ? <AuthAlert>{formError}</AuthAlert> : null}
-        {successMessage ? (
-          <AuthAlert tone="success">{successMessage}</AuthAlert>
-        ) : null}
-
         <div className="animate-auth-field animation-delay-300">
           <AuthInput
             error={errors.fullName}

@@ -22,6 +22,7 @@ import {
   getDocument,
   getDocumentChunks,
   getDocumentFileUrl,
+  getDocumentPages,
   getDocumentPreviewUrl,
 } from '../services/documentService.js'
 
@@ -32,6 +33,7 @@ function DocumentDetailPage() {
   const [deleting, setDeleting] = useState(false)
   const [doc, setDoc] = useState(null)
   const [chunks, setChunks] = useState([])
+  const [pages, setPages] = useState([])
   const [activeChunkId, setActiveChunkId] = useState('')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
@@ -45,14 +47,16 @@ function DocumentDetailPage() {
       setLoading(true)
       setError('')
       try {
-        const [docData, chunksData] = await Promise.all([
+        const [docData, chunksData, pagesData] = await Promise.all([
           getDocument(id),
           getDocumentChunks(id).catch(() => []), // fallback to empty array if endpoint fails or not implemented
+          getDocumentPages(id).catch(() => []),
         ])
 
         if (!isMounted) return
         setDoc(docData)
         setChunks(chunksData)
+        setPages(pagesData)
         if (chunksData && chunksData.length > 0) {
           setActiveChunkId(chunksData[0].id)
         }
@@ -96,15 +100,15 @@ function DocumentDetailPage() {
           available: false,
           message:
             response.status === 501
-              ? 'DOCX/PPTX preview cần cài LibreOffice ở backend để convert sang PDF.'
-              : 'Không tạo được preview hoàn chỉnh cho file này.',
+              ? 'DOCX and PPTX previews require backend document conversion support.'
+              : 'A complete preview is not available for this file.',
         })
       } catch {
         if (isMounted) {
           setPreviewState({
             loading: false,
             available: false,
-            message: 'Không kết nối được preview API.',
+            message: 'The preview API could not be reached.',
           })
         }
       }
@@ -131,6 +135,15 @@ function DocumentDetailPage() {
       )
     })
   }, [chunks, query])
+
+  const docPages = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    return pages.filter((page) => (
+      !normalizedQuery ||
+      page.content?.toLowerCase().includes(normalizedQuery) ||
+      String(page.pageNumber).includes(normalizedQuery)
+    ))
+  }, [pages, query])
 
   const selectedChunk = useMemo(() => {
     return chunks.find((c) => c.id === activeChunkId) || null
@@ -186,7 +199,10 @@ function DocumentDetailPage() {
           <ArrowLeft size={14} />
           Back to Library
         </Link>
-        <StatusBadge status={doc.status} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={doc.status} />
+          <StatusBadge status={doc.embeddingStatus} />
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-12 items-start">
@@ -281,7 +297,7 @@ function DocumentDetailPage() {
 
           {/* Stats Bento */}
           <div className="grid grid-cols-3 gap-2">
-            <CompactStatTile label="Pages" value={doc.pages} />
+            <CompactStatTile label="Pages" value={pages.length || doc.pages} />
             <CompactStatTile label="Chunks" value={chunks.length || doc.chunks || 0} />
             <CompactStatTile label="Status" value={doc.status} />
           </div>
@@ -302,7 +318,7 @@ function DocumentDetailPage() {
           <Panel className="p-5 border border-slate-100/80 shadow-sm">
             <h2 className="text-sm font-black tracking-tight text-slate-900">Processing timeline</h2>
             <div className="mt-4 space-y-3">
-              {['Uploaded', 'Extracting text', 'Chunking', 'Embedding', doc.status].map((step, index) => (
+              {['Uploaded', 'Text extracted', 'Pages stored', 'Chunks stored', doc.embeddingStatus].map((step, index) => (
                 <div className="flex gap-3 items-center" key={`${step}-${index}`}>
                   <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary">
                     <CheckCircle2 size={13} />
@@ -320,6 +336,65 @@ function DocumentDetailPage() {
 
       {/* CHUNK READER SECTION */}
       <div className="mt-8 border-t border-slate-100 pt-8">
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black tracking-tight text-slate-900">Extracted pages</h2>
+              <p className="text-xs font-semibold text-slate-500">
+                Inspect page-level text returned by the backend extraction API.
+              </p>
+            </div>
+          </div>
+
+          <Panel className="overflow-hidden p-0 border border-slate-100/80 shadow-sm">
+            <div className="border-b border-border p-5 bg-slate-50/50">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Document pages ({docPages.length})</h3>
+                  <p className="text-xs font-semibold text-slate-500">Page text is stored separately from chunks.</p>
+                </div>
+                <div className="w-full sm:w-80">
+                  <Field
+                    icon={Search}
+                    label="Search pages"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search extracted text..."
+                    value={query}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 p-5 md:grid-cols-2 max-h-[420px] overflow-y-auto">
+              {docPages.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center md:col-span-2">
+                  <FileText className="mx-auto text-slate-300" size={30} />
+                  <h4 className="mt-3 text-xs font-black text-slate-900">No pages to display</h4>
+                  <p className="mt-1 text-[11px] font-semibold text-slate-500">
+                    The backend returned no extracted pages, or the search did not match any page.
+                  </p>
+                </div>
+              ) : (
+                docPages.map((page) => (
+                  <article className="rounded-xl border border-slate-100 bg-white/80 p-4 shadow-sm" key={page.id || page.pageNumber}>
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-teal-50 px-2 py-0.5 text-[10px] font-black text-teal-700">Page {page.pageNumber}</span>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600">{page.wordCount} words</span>
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600">{page.charCount} chars</span>
+                    </div>
+                    <p className="line-clamp-6 whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-600">
+                      {page.content || 'No extracted text returned for this page.'}
+                    </p>
+                  </article>
+                ))
+              )}
+            </div>
+          </Panel>
+        </div>
+
         <div className="flex items-center gap-3 mb-6">
             <div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary">
               <Layers3 size={20} />

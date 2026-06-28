@@ -123,9 +123,11 @@ function WorkspacePage() {
   useEffect(() => {
     if (!activeWorkspace) return
     const convs = getConversations(activeWorkspace)
-    setConversations(convs)
-    // Don't auto-select a conversation; let the chat be "current session" by default
-    setActiveConvId(null)
+    queueMicrotask(() => {
+      setConversations(convs)
+      // Don't auto-select a conversation; let the chat be "current session" by default
+      setActiveConvId(null)
+    })
   }, [activeWorkspace])
 
   // ─── Scroll to bottom on new messages ──────────────────────────
@@ -135,7 +137,7 @@ function WorkspacePage() {
 
   const activeWorkspaceData = workspaces.find((item) => item.id === activeWorkspace)
   const indexedDocuments = useMemo(
-    () => documents.filter((document) => document.status === 'Indexed'),
+    () => documents.filter((document) => ['Indexed', 'Processed'].includes(document.status)),
     [documents],
   )
   const canChat = Boolean(session && indexedDocuments.length && !isAnswering)

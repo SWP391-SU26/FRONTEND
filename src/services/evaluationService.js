@@ -3,8 +3,7 @@ import { env } from '../config/env.js'
 
 export async function getDatasets() {
   const result = await request('/evaluation/datasets')
-  const list = Array.isArray(result) ? result : (result?.data ?? [])
-  return list.map(toUiDataset)
+  return unwrapList(result).map(toUiDataset)
 }
 
 export async function createDataset({ datasetName, courseId, workspaceId, createdBy }) {
@@ -12,13 +11,12 @@ export async function createDataset({ datasetName, courseId, workspaceId, create
     method: 'POST',
     body: JSON.stringify({ datasetName, courseId, workspaceId, createdBy }),
   })
-  return toUiDataset(result)
+  return toUiDataset(unwrapOne(result))
 }
 
 export async function getQuestions(datasetId) {
   const result = await request(`/evaluation/datasets/${datasetId}/questions`)
-  const list = Array.isArray(result) ? result : (result?.data ?? [])
-  return list.map(toUiQuestion)
+  return unwrapList(result).map(toUiQuestion)
 }
 
 export async function addQuestion({ datasetId, questionText, groundTruthAnswer }) {
@@ -26,13 +24,12 @@ export async function addQuestion({ datasetId, questionText, groundTruthAnswer }
     method: 'POST',
     body: JSON.stringify({ datasetId, questionText, groundTruthAnswer }),
   })
-  return toUiQuestion(result)
+  return toUiQuestion(unwrapOne(result))
 }
 
 export async function getExperiments() {
   const result = await request('/evaluation/experiments')
-  const list = Array.isArray(result) ? result : (result?.data ?? [])
-  return list.map(toUiExperiment)
+  return unwrapList(result).map(toUiExperiment).filter(Boolean)
 }
 
 export async function createExperiment({ datasetId, experimentName, experimentType, llmModel, configJson, createdBy }) {
@@ -40,7 +37,35 @@ export async function createExperiment({ datasetId, experimentName, experimentTy
     method: 'POST',
     body: JSON.stringify({ datasetId, experimentName, experimentType, llmModel, configJson, createdBy }),
   })
-  return toUiExperiment(result)
+  return toUiExperiment(unwrapOne(result))
+}
+
+export async function runBenchmark(experimentId) {
+  try {
+    return await request(`/evaluation/experiments/${experimentId}/run`, {
+      method: 'POST',
+    })
+  } catch (error) {
+    const message = error.message || ''
+    const unavailable =
+      error.status === 500 ||
+      error.status === 501 ||
+      message.toLowerCase().includes('unsupported') ||
+      message.toLowerCase().includes('not implemented')
+
+    if (unavailable) {
+      const nextError = new Error('Benchmark execution is not available yet. The experiment record was created successfully.')
+      nextError.status = error.status
+      throw nextError
+    }
+
+    throw error
+  }
+}
+
+export async function getExperimentResults(experimentId) {
+  const result = await request(`/evaluation/experiments/${experimentId}/results`)
+  return unwrapList(result).map(toUiExperimentResult)
 }
 
 export async function createFineTuningRecord({ name, datasetId, researcherId, llmModel, configJson }) {
@@ -48,71 +73,46 @@ export async function createFineTuningRecord({ name, datasetId, researcherId, ll
     method: 'POST',
     body: JSON.stringify({ name, datasetId, researcherId, llmModel, configJson }),
   })
-  return toUiExperiment(result)
+  return toUiExperiment(unwrapOne(result))
 }
 
 export async function getFineTuningFiles() {
   const result = await request('/fine-tuning/files')
-  return Array.isArray(result) ? result : (result?.data ?? [])
+  return unwrapList(result)
 }
 
 export async function exportJsonl(datasetId) {
   const response = await fetch(`${env.apiBaseUrl}/fine-tuning/export-jsonl/${datasetId}`, {
     method: 'POST',
   })
+
   if (!response.ok) {
-    throw new Error(`Export failed: ${response.statusText}`)
+    let message = `Export failed with status ${response.status}`
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('application/json')) {
+      const payload = await response.json().catch(() => null)
+      message = payload?.message || payload?.error || message
+    }
+    throw new Error(message)
   }
+
   return await response.blob()
 }
 
-// ── Simulation Engine for Benchmark Run ──
-export async function runSimulation(experiment, onProgress) {
-  const steps = [15, 38, 62, 85, 100]
-  for (const progress of steps) {
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    onProgress(progress)
-  }
-
-  // Generate realistic metrics based on configuration
-  const isFT = experiment.method === 'Fine-tuning' || experiment.experimentType === 'FINE_TUNING'
-  
-  if (isFT) {
-    return {
-      ragas: 0.74,
-      latency: 1.3,
-      accuracy: 0.71,
-      cost: 4.2,
-      metrics: [
-        { label: 'Faithfulness', value: 72 },
-        { label: 'Answer relevancy', value: 75 },
-        { label: 'Context precision', value: 64 },
-        { label: 'Context recall', value: 70 },
-      ]
-    }
-  } else {
-    // RAG baseline / semantic
-    const isSemantic = (experiment.chunking || '').toLowerCase().includes('semantic')
-    return {
-      ragas: isSemantic ? 0.85 : 0.78,
-      latency: isSemantic ? 2.3 : 1.9,
-      accuracy: isSemantic ? 0.82 : 0.75,
-      cost: isSemantic ? 3.1 : 2.5,
-      metrics: [
-        { label: 'Faithfulness', value: isSemantic ? 84 : 79 },
-        { label: 'Answer relevancy', value: isSemantic ? 88 : 83 },
-        { label: 'Context precision', value: isSemantic ? 81 : 75 },
-        { label: 'Context recall', value: isSemantic ? 78 : 73 },
-      ]
-    }
-  }
+function unwrapList(result) {
+  return Array.isArray(result) ? result : (result?.data ?? [])
 }
 
-// ── Mappers ──
+function unwrapOne(result) {
+  return result?.data ?? result
+}
+
 function toUiDataset(ds) {
   return {
     id: ds.datasetId,
+    datasetId: ds.datasetId,
     name: ds.datasetName,
+    datasetName: ds.datasetName,
     version: ds.datasetVersion,
     description: ds.description,
     courseId: ds.courseId,
@@ -125,40 +125,73 @@ function toUiDataset(ds) {
 function toUiQuestion(q) {
   return {
     id: q.evaluationQuestionId,
+    evaluationQuestionId: q.evaluationQuestionId,
     datasetId: q.datasetId,
     courseId: q.courseId,
     chapterId: q.chapterId,
     questionNo: q.questionNo,
     question: q.questionText,
+    questionText: q.questionText,
     groundTruth: q.groundTruthAnswer,
+    groundTruthAnswer: q.groundTruthAnswer,
     expectedDocumentId: q.expectedDocumentId,
     expectedPage: q.expectedPage,
     type: q.questionType,
+    questionType: q.questionType,
     difficulty: q.difficulty,
   }
 }
 
 function toUiExperiment(e) {
+  if (!e) return null
+  const experimentType = e.experimentType ?? 'RAG'
+
   return {
     id: e.experimentId,
+    experimentId: e.experimentId,
     datasetId: e.datasetId,
     courseId: e.courseId,
     workspaceId: e.workspaceId,
     name: e.experimentName,
-    method: e.experimentType === 'FINE_TUNING' ? 'Fine-tuning' : 'RAG',
+    experimentName: e.experimentName,
+    experimentType,
+    method: experimentType === 'FINE_TUNING' ? 'Fine-tuning' : 'RAG',
     llmModel: e.llmModel,
-    embedding: e.embeddingModelId ? 'bge-m3' : 'multilingual-e5-base',
-    chunking: e.chunkingStrategy || 'Fixed-size',
-    status: e.status || 'PENDING',
+    embeddingModelId: e.embeddingModelId,
+    chunkingStrategy: e.chunkingStrategy,
+    topK: e.topK,
+    temperature: e.temperature,
+    fineTunedModelName: e.fineTunedModelName,
     configJson: e.configJson,
+    status: e.status || 'PENDING',
     createdBy: e.createdBy,
     startedAt: e.startedAt,
     completedAt: e.completedAt,
     createdAt: e.createdAt,
-    // Placeholder default metrics that will be filled after simulation
-    ragas: 0.0,
-    latency: 0.0,
-    accuracy: 0.0,
-    cost: 0.0,
+  }
+}
+
+function toUiExperimentResult(result) {
+  return {
+    id: result.experimentResultId,
+    experimentResultId: result.experimentResultId,
+    experimentId: result.experimentId,
+    evaluationQuestionId: result.evaluationQuestionId,
+    generatedAnswer: result.generatedAnswer,
+    retrievedContextJson: result.retrievedContextJson,
+    citationsJson: result.citationsJson,
+    faithfulness: result.faithfulness,
+    answerRelevance: result.answerRelevance,
+    contextPrecision: result.contextPrecision,
+    contextRecall: result.contextRecall,
+    answerCorrectness: result.answerCorrectness,
+    semanticSimilarity: result.semanticSimilarity,
+    latencyMs: result.latencyMs,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    totalTokens: result.totalTokens,
+    cost: result.cost,
+    errorMessage: result.errorMessage,
+    createdAt: result.createdAt,
   }
 }

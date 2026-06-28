@@ -163,6 +163,26 @@ Must include:
 - Chapter/subject metadata.
 - Clear note that documents are usable in RAG only after indexing.
 
+## 8.1 Library Page Design
+
+Current route:
+
+```text
+/library
+```
+
+Library redesign direction:
+
+- Uses the existing Manrope family for the Library surface to keep typography consistent across the app.
+- Keeps the teal/green academic brand and glassy workspace panels.
+- Filter toolbar uses custom animated dropdowns instead of native selects for Course, File type, and Status.
+- Filter menus open with a restrained downward roll/slide animation, staggered option reveal, rotating chevron, and teal active state.
+- Library typography avoids blanket heavy weights while preserving bold emphasis for page title, metric values, document names, and primary actions.
+- Document stats and cards animate with lightweight transform/opacity transitions.
+- Document card hover stays subtle without tilt or table-row scaling, preserving readable document management UI.
+- Filter dropdowns must sit above document cards and tables when opened.
+- Document tables should keep a light bottom gap so the final panel never feels attached to the viewport/footer.
+
 ## 9. Component Rules
 
 Buttons:

@@ -12,6 +12,10 @@ import { cn } from '../utils/cn.js'
 
 const statusStyles = {
   Indexed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Processed: 'border-teal-200 bg-teal-50 text-teal-700',
+  Prepared: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  'Not prepared': 'border-slate-200 bg-slate-50 text-slate-600',
+  Pending: 'border-amber-200 bg-amber-50 text-amber-700',
   Processing: 'border-amber-200 bg-amber-50 text-amber-700',
   Uploaded: 'border-teal-200 bg-teal-50 text-teal-700',
   Failed: 'border-red-200 bg-red-50 text-red-700',
@@ -19,6 +23,10 @@ const statusStyles = {
 
 const statusIcons = {
   Indexed: CheckCircle2,
+  Processed: CheckCircle2,
+  Prepared: CheckCircle2,
+  'Not prepared': Clock3,
+  Pending: Clock3,
   Processing: Loader2,
   Uploaded: Clock3,
   Failed: XCircle,
@@ -81,6 +89,7 @@ export function IconButton({ label, children, className, ...props }) {
       className={cn(
         'grid size-9 place-items-center rounded-xl text-slate-500 transition-colors duration-200 hover:bg-teal-50 hover:text-primary hover:shadow-sm',
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500',
+        'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-slate-500 disabled:hover:shadow-none',
         className,
       )}
       title={label}

@@ -3,7 +3,11 @@ import { request } from './httpClient.js'
 import { env } from '../config/env.js'
 
 function getRequesterId() {
-  return getSavedUser()?.id ?? ''
+  const requesterId = getSavedUser()?.id
+  if (!requesterId) {
+    throw new Error('Sign in before opening document APIs.')
+  }
+  return requesterId
 }
 
 export async function getDocuments() {
@@ -29,7 +33,8 @@ export async function getDocument(documentId) {
 export async function getDocumentPages(documentId) {
   const requesterId = getRequesterId()
   const result = await request(`/documents/${documentId}/pages?requesterId=${requesterId}`)
-  return result?.data ?? result
+  const pages = Array.isArray(result) ? result : (result?.data ?? [])
+  return pages.map(toUiPage)
 }
 
 export async function getDocumentChunks(documentId) {
@@ -95,6 +100,7 @@ export async function uploadDocument({ file, workspaceId, courseId, chapterId, u
 export function toUiDocument(document, extra = {}) {
   if (!document) return null
   const status = toUiStatus(document.processingStatus)
+  const hasEmbeddings = extra.hasEmbeddings ?? extra.chunks > 0
 
   const uploadedAt = document.uploadedAt || document.createdAt
     ? new Date(document.uploadedAt ?? document.createdAt).toLocaleDateString('en-US', {
@@ -112,8 +118,10 @@ export function toUiDocument(document, extra = {}) {
     subject: extra.subject ?? 'Course Workspace',
     chapter: extra.chapter ?? 'General',
     status,
+    processingStatus: status,
+    embeddingStatus: hasEmbeddings ? 'Prepared' : 'Not prepared',
     chunks: extra.chunks ?? 0,
-    embeddingModel: status === 'Indexed' ? 'keyword-hash-128' : 'Not embedded',
+    embeddingModel: hasEmbeddings ? 'keyword-hash-128' : 'Not prepared',
     uploadedAt,
     size: extra.size ?? 'Stored',
     pages: document.totalPages ?? 0,
@@ -123,6 +131,17 @@ export function toUiDocument(document, extra = {}) {
     preview:
       document.errorMessage ??
       'Document processed and stored.',
+  }
+}
+
+export function toUiPage(page) {
+  return {
+    id: page.pageId,
+    documentId: page.documentId,
+    pageNumber: page.pageNumber,
+    content: page.cleanedText,
+    wordCount: page.wordCount ?? 0,
+    charCount: page.charCount ?? 0,
   }
 }
 
@@ -141,8 +160,9 @@ export function toUiChunk(chunk) {
 function toUiStatus(status) {
   switch (status) {
     case 'INDEXED':
-    case 'PROCESSED':
       return 'Indexed'
+    case 'PROCESSED':
+      return 'Processed'
     case 'PROCESSING':
       return 'Processing'
     case 'FAILED':

@@ -4,7 +4,7 @@ import AuthAlert from '../components/auth/AuthAlert.jsx'
 import AuthInput from '../components/auth/AuthInput.jsx'
 import AuthShell from '../components/auth/AuthShell.jsx'
 import Button from '../components/common/Button.jsx'
-import { login, saveSession } from '../services/authService.js'
+import { getDefaultRouteForUser, login, saveSession } from '../services/authService.js'
 
 const highlights = [
   'Course-grounded answers',
@@ -62,7 +62,7 @@ function LoginPage() {
     try {
       const session = await login(form)
       saveSession(session)
-      navigate(session.user.role === 'admin' ? '/admin' : '/app')
+      navigate(getDefaultRouteForUser(session.user))
     } catch (error) {
       setFormError(error.message)
     } finally {
@@ -122,9 +122,9 @@ function LoginPage() {
             />
             Remember me
           </label>
-          <a className="font-bold text-primary" href="/login">
-            Forgot password?
-          </a>
+          <span className="font-bold text-slate-400" title="Password reset is not available in the current backend API.">
+            Password reset unavailable
+          </span>
         </div>
 
         <div className="animate-auth-field animation-delay-450">

@@ -714,3 +714,41 @@ a {
   box-shadow: 0 0 0 4px hsl(176 77% 92%);
 }
 
+/* Library redesign */
+.library-page {
+  font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+}
+
+.library-page .library-hero-title,
+.library-page .library-display-number {
+  letter-spacing: 0;
+}
+
+.library-hero-panel {
+  box-shadow:
+    0 22px 54px rgba(15, 118, 110, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.library-filter-panel {
+  overflow: visible;
+  border-color: rgba(153, 246, 228, 0.66);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(240, 253, 250, 0.72)),
+    radial-gradient(circle at 10% 0%, rgba(20, 184, 166, 0.13), transparent 30%);
+}
+
+.library-filter-select {
+  box-shadow:
+    0 8px 18px rgba(15, 118, 110, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.library-filter-menu {
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.12),
+    0 6px 14px rgba(15, 118, 110, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  transform-origin: top center;
+}
+
