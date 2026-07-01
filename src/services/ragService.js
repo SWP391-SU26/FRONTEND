@@ -1,21 +1,27 @@
 import { request } from './httpClient.js'
 
-/** Lấy embedding model active đầu tiên, hoặc null nếu không có */
-export async function getActiveEmbeddingModel() {
-  const models = await request('/rag/embedding-models')
-  const list = Array.isArray(models) ? models : (models?.data ?? [])
-  return list.find((m) => m.isActive) ?? list[0] ?? null
+export async function getEmbeddingModels() {
+  const result = await request('/rag/embedding-models')
+  return (Array.isArray(result) ? result : result?.items ?? []).map((model) => ({
+    id: model.embeddingModelId ?? model.id,
+    embeddingModelId: model.embeddingModelId ?? model.id,
+    name: model.modelName,
+    provider: model.provider,
+    dimension: model.dimension,
+    status: model.status ?? (model.isActive ? 'AVAILABLE' : 'DISABLED'),
+    isActive: Boolean(model.isActive),
+  }))
 }
 
-/**
- * Chuẩn bị embeddings (re-index) cho 1 document.
- * @param {string} documentId
- * @param {string} workspaceId
- * @param {string} embeddingModelId
- */
-export async function prepareEmbeddings(documentId, workspaceId, embeddingModelId) {
-  return request('/rag/embeddings/prepare', {
-    method: 'POST',
-    body: JSON.stringify({ documentId, workspaceId, embeddingModelId }),
+export async function getActiveEmbeddingModel() {
+  const models = await getEmbeddingModels()
+  return models.find((model) => model.isActive && model.status === 'AVAILABLE') ?? null
+}
+
+export function getModelCapabilities() {
+  return Promise.resolve({
+    models: [],
+    officialRagasEnabled: false,
+    note: 'Current Java backend exposes /rag/embedding-models but not model capabilities.',
   })
 }

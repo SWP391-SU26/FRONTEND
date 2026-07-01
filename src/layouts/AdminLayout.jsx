@@ -30,9 +30,7 @@ function AdminLayout() {
   const initials = getInitials(user?.name)
 
   function handleLogout() {
-    if (user?.id) {
-      logout(user.id).catch(() => {})
-    }
+    logout().catch(() => {})
     clearSession()
     navigate('/login')
   }

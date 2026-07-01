@@ -2,7 +2,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, BookOpen, Boxes, Layers3, Loader2, Plus, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button, EmptyState, Panel, StatusBadge } from '../../components/ui.jsx'
-import { getSavedUser } from '../../services/authService.js'
 import {
   createChapter,
   createCourse,
@@ -25,7 +24,6 @@ const blankForm = {
 }
 
 export default function CourseManagementPage() {
-  const user = getSavedUser()
   const [courses, setCourses] = useState([])
   const [selectedId, setSelectedId] = useState('')
   const [chapters, setChapters] = useState([])
@@ -88,7 +86,6 @@ export default function CourseManagementPage() {
           courseCode: form.courseCode.trim(),
           courseName: form.courseName.trim(),
           description: form.description.trim() || null,
-          createdBy: user?.id || null,
         })
         setCourses((current) => [created, ...current])
         setStructureLoading(true)
@@ -102,7 +99,6 @@ export default function CourseManagementPage() {
         setChapters((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
       } else {
         const created = await createWorkspace(selectedId, {
-          ownerUserId: user?.id || null,
           workspaceTitle: form.workspaceTitle.trim(),
           description: form.description.trim() || null,
           visibility: form.visibility,

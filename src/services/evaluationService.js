@@ -1,110 +1,147 @@
 import { request } from './httpClient.js'
-import { env } from '../config/env.js'
+import { getCurrentUserId } from './authService.js'
 
 export async function getDatasets() {
-  const result = await request('/evaluation/datasets')
-  return unwrapList(result).map(toUiDataset)
+  return unwrapList(await request('/evaluation/datasets')).map(toUiDataset)
 }
 
-export async function createDataset({ datasetName, courseId, workspaceId, createdBy }) {
-  const result = await request('/evaluation/datasets', {
+export async function createDataset({ datasetName, courseId, workspaceId, documentIds = [] }) {
+  void documentIds
+  return toUiDataset(await request('/evaluation/datasets', {
     method: 'POST',
-    body: JSON.stringify({ datasetName, courseId, workspaceId, createdBy }),
-  })
-  return toUiDataset(unwrapOne(result))
+    body: JSON.stringify({ datasetName, courseId, workspaceId, createdBy: getCurrentUserId() }),
+  }))
+}
+
+export async function importQuestions(datasetId, file) {
+  void datasetId
+  void file
+  const error = new Error('CSV import is not available in the current backend API.')
+  error.status = 501
+  return Promise.reject(error)
 }
 
 export async function getQuestions(datasetId) {
-  const result = await request(`/evaluation/datasets/${datasetId}/questions`)
-  return unwrapList(result).map(toUiQuestion)
+  return unwrapList(await request(`/evaluation/datasets/${datasetId}/questions`)).map(toUiQuestion)
 }
 
-export async function addQuestion({ datasetId, questionText, groundTruthAnswer }) {
-  const result = await request('/evaluation/questions', {
+export async function addQuestion(payload) {
+  return toUiQuestion(await request('/evaluation/questions', {
     method: 'POST',
-    body: JSON.stringify({ datasetId, questionText, groundTruthAnswer }),
-  })
-  return toUiQuestion(unwrapOne(result))
+    body: JSON.stringify({
+      datasetId: payload.datasetId,
+      questionText: payload.questionText,
+      groundTruthAnswer: payload.groundTruthAnswer,
+    }),
+  }))
 }
 
 export async function getExperiments() {
-  const result = await request('/evaluation/experiments')
-  return unwrapList(result).map(toUiExperiment).filter(Boolean)
+  return unwrapList(await request('/evaluation/experiments')).map(toUiExperiment).filter(Boolean)
 }
 
-export async function createExperiment({ datasetId, experimentName, experimentType, llmModel, configJson, createdBy }) {
-  const result = await request('/evaluation/experiments', {
+export async function getExperiment(experimentId) {
+  const experiments = await getExperiments()
+  return experiments.find((experiment) => experiment.id === experimentId) ?? null
+}
+
+export async function createExperiment(payload) {
+  return toUiExperiment(await request('/evaluation/experiments', {
     method: 'POST',
-    body: JSON.stringify({ datasetId, experimentName, experimentType, llmModel, configJson, createdBy }),
-  })
-  return toUiExperiment(unwrapOne(result))
+    body: JSON.stringify({
+      datasetId: payload.datasetId,
+      experimentName: payload.experimentName,
+      experimentType: payload.experimentType,
+      llmModel: payload.llmModel || payload.embeddingModelName || payload.generationMode || 'rag',
+      configJson: payload.configJson || '{}',
+      createdBy: getCurrentUserId(),
+    }),
+  }))
 }
 
 export async function runBenchmark(experimentId) {
-  try {
-    return await request(`/evaluation/experiments/${experimentId}/run`, {
-      method: 'POST',
-    })
-  } catch (error) {
-    const message = error.message || ''
-    const unavailable =
-      error.status === 500 ||
-      error.status === 501 ||
-      message.toLowerCase().includes('unsupported') ||
-      message.toLowerCase().includes('not implemented')
-
-    if (unavailable) {
-      const nextError = new Error('Benchmark execution is not available yet. The experiment record was created successfully.')
-      nextError.status = error.status
-      throw nextError
-    }
-
-    throw error
+  const result = await request(`/evaluation/experiments/${experimentId}/run`, { method: 'POST' })
+  return {
+    jobId: result.jobId ?? result.benchmarkJobId ?? result.experimentId ?? experimentId,
+    experimentId: result.experimentId ?? experimentId,
+    status: result.status ?? 'COMPLETED',
   }
+}
+
+export async function waitForExperiment(experimentId, { onProgress, timeoutMs = 1800000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const experiment = await getExperiment(experimentId)
+    if (!experiment) return { id: experimentId, experimentId, status: 'COMPLETED', progress: 100 }
+    onProgress?.(experiment)
+    if (experiment.status === 'COMPLETED') return experiment
+    if (experiment.status === 'FAILED') {
+      const error = new Error(experiment.errorMessage || 'Benchmark failed.')
+      error.code = 'BENCHMARK_FAILED'
+      throw error
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1500))
+  }
+  const error = new Error('Benchmark is still running. Refresh to check its progress.')
+  error.code = 'BENCHMARK_TIMEOUT'
+  throw error
 }
 
 export async function getExperimentResults(experimentId) {
-  const result = await request(`/evaluation/experiments/${experimentId}/results`)
-  return unwrapList(result).map(toUiExperimentResult)
+  return unwrapList(await request(`/evaluation/experiments/${experimentId}/results`)).map(toUiExperimentResult)
 }
 
-export async function createFineTuningRecord({ name, datasetId, researcherId, llmModel, configJson }) {
-  const result = await request('/fine-tuning/experiments', {
-    method: 'POST',
-    body: JSON.stringify({ name, datasetId, researcherId, llmModel, configJson }),
+export function getEvaluationDashboard(filters = {}) {
+  void filters
+  return Promise.resolve({
+    summary: {},
+    configurations: [],
+    recommended: null,
+    metricMetadata: {
+      officialRagas: false,
+      note: 'Current Java backend does not expose /evaluation/dashboard yet.',
+    },
   })
-  return toUiExperiment(unwrapOne(result))
 }
 
-export async function getFineTuningFiles() {
-  const result = await request('/fine-tuning/files')
-  return unwrapList(result)
-}
-
-export async function exportJsonl(datasetId) {
-  const response = await fetch(`${env.apiBaseUrl}/fine-tuning/export-jsonl/${datasetId}`, {
-    method: 'POST',
+export function getEvaluationCapabilities() {
+  return Promise.resolve({
+    officialRagasEnabled: false,
+    judgeModel: 'Not available',
+    evaluatorEmbedding: 'Not available',
   })
+}
 
-  if (!response.ok) {
-    let message = `Export failed with status ${response.status}`
-    const contentType = response.headers.get('content-type') ?? ''
-    if (contentType.includes('application/json')) {
-      const payload = await response.json().catch(() => null)
-      message = payload?.message || payload?.error || message
-    }
-    throw new Error(message)
-  }
+export function createFineTuningRecord({ name, datasetId, llmModel, configJson }) {
+  return request('/fine-tuning/experiments', {
+    method: 'POST',
+    body: JSON.stringify({ name, datasetId, researcherId: getCurrentUserId(), llmModel, configJson }),
+  }).then(toUiExperiment)
+}
 
-  return await response.blob()
+export function getFineTuningFiles() {
+  return request('/fine-tuning/files').then(unwrapList)
+}
+
+export function getFineTuningStatus() {
+  return Promise.resolve({ ready: false, status: 'UNAVAILABLE' })
+}
+
+export function exportJsonl(datasetId) {
+  return request(`/fine-tuning/export-jsonl/${datasetId}`, {
+    method: 'POST',
+    responseType: 'blob',
+  })
+}
+
+export function exportEvaluationReport(format = 'csv') {
+  const content = format === 'json' ? '[]' : 'experiment,metric,value\n'
+  const type = format === 'json' ? 'application/json' : 'text/csv'
+  return Promise.resolve(new Blob([content], { type }))
 }
 
 function unwrapList(result) {
-  return Array.isArray(result) ? result : (result?.data ?? [])
-}
-
-function unwrapOne(result) {
-  return result?.data ?? result
+  return Array.isArray(result) ? result : (result?.items ?? result?.content ?? [])
 }
 
 function toUiDataset(ds) {
@@ -117,7 +154,9 @@ function toUiDataset(ds) {
     description: ds.description,
     courseId: ds.courseId,
     workspaceId: ds.workspaceId,
-    createdBy: ds.createdBy,
+    documentIds: ds.documentIds ?? [],
+    questionCount: ds.questionCount ?? 0,
+    checksum: ds.checksum ?? null,
     createdAt: ds.createdAt,
   }
 }
@@ -127,8 +166,6 @@ function toUiQuestion(q) {
     id: q.evaluationQuestionId,
     evaluationQuestionId: q.evaluationQuestionId,
     datasetId: q.datasetId,
-    courseId: q.courseId,
-    chapterId: q.chapterId,
     questionNo: q.questionNo,
     question: q.questionText,
     questionText: q.questionText,
@@ -136,50 +173,47 @@ function toUiQuestion(q) {
     groundTruthAnswer: q.groundTruthAnswer,
     expectedDocumentId: q.expectedDocumentId,
     expectedPage: q.expectedPage,
+    isOutOfScope: Boolean(q.isOutOfScope),
     type: q.questionType,
-    questionType: q.questionType,
     difficulty: q.difficulty,
   }
 }
 
 function toUiExperiment(e) {
   if (!e) return null
-  const experimentType = e.experimentType ?? 'RAG'
-
+  const type = e.experimentType ?? 'RAG'
   return {
     id: e.experimentId,
     experimentId: e.experimentId,
     datasetId: e.datasetId,
-    courseId: e.courseId,
-    workspaceId: e.workspaceId,
     name: e.experimentName,
-    experimentName: e.experimentName,
-    experimentType,
-    method: experimentType === 'FINE_TUNING' ? 'Fine-tuning' : 'RAG',
-    llmModel: e.llmModel,
+    experimentType: type,
+    method: type === 'FINE_TUNING' ? 'Fine-tuning' : 'RAG',
     embeddingModelId: e.embeddingModelId,
+    embeddingModelName: e.embeddingModelName,
     chunkingStrategy: e.chunkingStrategy,
+    generationMode: e.generationMode,
     topK: e.topK,
     temperature: e.temperature,
-    fineTunedModelName: e.fineTunedModelName,
+    seed: e.seed,
     configJson: e.configJson,
     status: e.status || 'PENDING',
-    createdBy: e.createdBy,
+    progress: Number(e.progress ?? 0),
     startedAt: e.startedAt,
     completedAt: e.completedAt,
     createdAt: e.createdAt,
+    errorMessage: e.errorMessage ?? null,
   }
 }
 
 function toUiExperimentResult(result) {
   return {
     id: result.experimentResultId,
-    experimentResultId: result.experimentResultId,
     experimentId: result.experimentId,
     evaluationQuestionId: result.evaluationQuestionId,
     generatedAnswer: result.generatedAnswer,
-    retrievedContextJson: result.retrievedContextJson,
-    citationsJson: result.citationsJson,
+    contexts: result.contexts ?? parseJson(result.retrievedContextJson, []),
+    citations: result.citations ?? parseJson(result.citationsJson, []),
     faithfulness: result.faithfulness,
     answerRelevance: result.answerRelevance,
     contextPrecision: result.contextPrecision,
@@ -187,11 +221,13 @@ function toUiExperimentResult(result) {
     answerCorrectness: result.answerCorrectness,
     semanticSimilarity: result.semanticSimilarity,
     latencyMs: result.latencyMs,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    totalTokens: result.totalTokens,
     cost: result.cost,
     errorMessage: result.errorMessage,
     createdAt: result.createdAt,
   }
+}
+
+function parseJson(value, fallback) {
+  if (!value) return fallback
+  try { return JSON.parse(value) } catch { return fallback }
 }

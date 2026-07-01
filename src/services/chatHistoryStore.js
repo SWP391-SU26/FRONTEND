@@ -1,70 +1,77 @@
-/**
- * chatHistoryStore.js
- * Lưu trữ lịch sử hội thoại theo workspaceId vào localStorage.
- * Mỗi workspace có một danh sách các "conversation" (cuộc trò chuyện).
- * Mỗi conversation có: { id, title, createdAt, messages: [{role, content, ts}] }
- */
+const STORAGE_KEY = 'fstu_chat_history_v2'
 
-const STORAGE_KEY = 'fstu_chat_history_v1'
-const MAX_CONVERSATIONS = 30   // tối đa 30 cuộc trò chuyện / workspace
-const MAX_MESSAGES_PER_CONV = 100
+export function getLocalConversations(userId, workspaceId) {
+  if (!userId || !workspaceId) return []
+  return readStore()[scopeKey(userId, workspaceId)] ?? []
+}
 
-function load() {
+export function createLocalConversation({ userId, workspaceId, backendSessionId, messages = [] }) {
+  const now = new Date().toISOString()
+  const conversation = {
+    id: globalThis.crypto?.randomUUID?.() ?? `conversation-${Date.now()}`,
+    backendSessionId,
+    workspaceId,
+    title: deriveTitle(messages),
+    messages,
+    messageCount: messages.length,
+    createdAt: now,
+    updatedAt: now,
+  }
+  saveLocalConversation(userId, workspaceId, conversation)
+  return conversation
+}
+
+export function saveLocalConversation(userId, workspaceId, conversation) {
+  if (!userId || !workspaceId || !conversation?.id) return []
+  const store = readStore()
+  const key = scopeKey(userId, workspaceId)
+  const current = store[key] ?? []
+  const normalized = {
+    ...conversation,
+    title: !conversation.title || conversation.title === 'New conversation'
+      ? deriveTitle(conversation.messages)
+      : conversation.title,
+    messageCount: conversation.messages?.length ?? 0,
+    updatedAt: conversation.updatedAt ?? new Date().toISOString(),
+  }
+  store[key] = [normalized, ...current.filter((item) => item.id !== normalized.id)]
+  writeStore(store)
+  return store[key]
+}
+
+export function removeLocalConversation(userId, workspaceId, conversationId) {
+  const store = readStore()
+  const key = scopeKey(userId, workspaceId)
+  store[key] = (store[key] ?? []).filter((item) => item.id !== conversationId)
+  writeStore(store)
+  return store[key]
+}
+
+export function clearLocalConversations(userId, workspaceId) {
+  const store = readStore()
+  delete store[scopeKey(userId, workspaceId)]
+  writeStore(store)
+}
+
+function deriveTitle(messages = []) {
+  const firstQuestion = messages.find((message) => message.role === 'user')?.content?.trim()
+  if (!firstQuestion) return 'New conversation'
+  return firstQuestion.length > 54 ? `${firstQuestion.slice(0, 54)}...` : firstQuestion
+}
+
+function scopeKey(userId, workspaceId) {
+  return `${userId}:${workspaceId}`
+}
+
+function readStore() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   } catch {
     return {}
   }
 }
 
-function save(data) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-  } catch {
-    // localStorage đầy → bỏ qua
-  }
-}
-
-/** Lấy tất cả conversation của một workspace, mới nhất trước. */
-export function getConversations(workspaceId) {
-  const data = load()
-  return (data[workspaceId] ?? []).slice().sort((a, b) => b.createdAt - a.createdAt)
-}
-
-/** Tạo conversation mới và trả về id của nó. */
-export function createConversation(workspaceId, title = 'New conversation') {
-  const data = load()
-  if (!data[workspaceId]) data[workspaceId] = []
-  const conv = { id: `conv_${Date.now()}`, title, createdAt: Date.now(), messages: [] }
-  data[workspaceId] = [conv, ...data[workspaceId]].slice(0, MAX_CONVERSATIONS)
-  save(data)
-  return conv
-}
-
-/** Thêm tin nhắn vào conversation. */
-export function appendMessage(workspaceId, convId, role, content) {
-  const data = load()
-  const list = data[workspaceId] ?? []
-  const conv = list.find((c) => c.id === convId)
-  if (!conv) return
-  conv.messages = [...conv.messages, { role, content, ts: Date.now() }].slice(-MAX_MESSAGES_PER_CONV)
-  // Đặt tiêu đề tự động từ câu hỏi đầu tiên của user
-  if (role === 'user' && conv.title === 'New conversation') {
-    conv.title = content.trim().slice(0, 60) + (content.length > 60 ? '…' : '')
-  }
-  save(data)
-}
-
-/** Xoá một conversation. */
-export function deleteConversation(workspaceId, convId) {
-  const data = load()
-  data[workspaceId] = (data[workspaceId] ?? []).filter((c) => c.id !== convId)
-  save(data)
-}
-
-/** Xoá toàn bộ history của workspace. */
-export function clearWorkspaceHistory(workspaceId) {
-  const data = load()
-  delete data[workspaceId]
-  save(data)
+function writeStore(store) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
 }

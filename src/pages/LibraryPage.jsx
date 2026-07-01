@@ -31,21 +31,36 @@ import {
   SelectField,
   StatusBadge,
 } from '../components/ui.jsx'
-import { getSavedUser } from '../services/authService.js'
 import { getCourses, getChapters, getWorkspaces, getWorkspacesByCourse } from '../services/courseService.js'
 import {
   deleteDocument,
-  getDocumentChunks,
   getDocumentPreviewUrl,
   getDocumentsByWorkspace,
-  uploadDocument,
+  reindexDocument,
+  waitForIndexingJob,
 } from '../services/documentService.js'
-import { getActiveEmbeddingModel, prepareEmbeddings } from '../services/ragService.js'
+import { getActiveEmbeddingModel } from '../services/ragService.js'
+import { subscribe as subscribeUploads, uploadFiles } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
 
 const allOption = 'All'
 const fileTypes = [allOption, 'PDF', 'DOCX', 'PPTX', 'TXT']
 const statuses = [allOption, 'Uploaded', 'Processing', 'Processed', 'Indexed', 'Failed']
+
+function formatChunkCount(count) {
+  return Number.isFinite(count) ? count : '-'
+}
+
+function formatTotalChunks(documents) {
+  const knownCounts = documents
+    .map((document) => document.chunks)
+    .filter(Number.isFinite)
+
+  if (knownCounts.length === 0) return '-'
+
+  const total = knownCounts.reduce((sum, count) => sum + count, 0)
+  return knownCounts.length === documents.length ? total : `${total}+`
+}
 
 // ─── File type colour helpers ────────────────────────────────────────────────
 
@@ -127,20 +142,15 @@ function LibraryPage() {
         const documents = await getDocumentsByWorkspace(selectedId)
         
 
-        const documentsWithChunks = await Promise.all(
-          documents.map(async (doc) => {
-            const chunks = await getDocumentChunks(doc.id).catch(() => [])
-            const workspace = workspaces.find((w) => w.id === doc.workspaceId)
-            const course = courses.find((c) => c.id === doc.courseId)
-            return {
-              ...doc,
-              subject: workspace?.name ?? doc.subject,
-              courseName: course?.name ?? '',
-              chunks: chunks.length,
-              embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not prepared',
-            }
-          }),
-        )
+        const documentsWithChunks = documents.map((doc) => {
+          const workspace = workspaces.find((w) => w.id === doc.workspaceId)
+          const course = courses.find((c) => c.id === doc.courseId)
+          return {
+            ...doc,
+            subject: workspace?.name ?? doc.subject,
+            courseName: course?.name ?? '',
+          }
+        })
 
         if (isMounted) setDocs(documentsWithChunks)
       } catch (loadError) {
@@ -199,7 +209,12 @@ function LibraryPage() {
 
   // Delete
   async function confirmDeleteDocument() {
-    if (!docToDelete) return
+    if (!docToDelete || deleting) return
+    if (!docToDelete.canDelete) {
+      setError('You do not have permission to delete this document.')
+      setDocToDelete(null)
+      return
+    }
     setDeleting(true)
     setError('')
     try {
@@ -213,10 +228,26 @@ function LibraryPage() {
     }
   }
 
-  // After upload: add docs to list
-  function handleUploaded(newDocs) {
-    setDocs((curr) => [...newDocs, ...curr])
-  }
+  useEffect(() => {
+    function handleDocumentUploaded(event) {
+      const doc = event.detail
+      if (!doc || doc.workspaceId !== activeWorkspaceId) return
+      const workspace = workspaceList.find((w) => w.id === doc.workspaceId)
+      const course = courses.find((c) => c.id === doc.courseId)
+      const nextDoc = {
+        ...doc,
+        subject: workspace?.name ?? doc.subject,
+        courseName: course?.name ?? '',
+      }
+      setDocs((curr) => {
+        if (curr.some((item) => item.id === nextDoc.id)) return curr
+        return [nextDoc, ...curr]
+      })
+    }
+
+    window.addEventListener('fstu:document-uploaded', handleDocumentUploaded)
+    return () => window.removeEventListener('fstu:document-uploaded', handleDocumentUploaded)
+  }, [activeWorkspaceId, courses, workspaceList])
 
   // Prepare embeddings: call the RAG preparation API without changing extraction status.
   async function handleReindex(doc) {
@@ -232,16 +263,27 @@ function LibraryPage() {
       const model = await getActiveEmbeddingModel()
       if (!model) throw new Error('No active embedding model found. Ask admin to configure one.')
 
-      const result = await prepareEmbeddings(doc.id, doc.workspaceId, model.embeddingModelId)
+      const job = await reindexDocument(doc.id, model.embeddingModelId)
+      const result = await waitForIndexingJob(job.id, {
+        onProgress: (currentJob) => {
+          setDocs((curr) => curr.map((item) => (
+            item.id === doc.id
+              ? { ...item, status: 'Processing', embeddingStatus: `${currentJob.stage} ${currentJob.progress}%` }
+              : item
+          )))
+        },
+      })
 
       setDocs((curr) =>
         curr.map((d) =>
           d.id === doc.id
             ? {
                 ...d,
+                status: 'Indexed',
                 embeddingStatus: 'Prepared',
-                chunks: result?.totalChunks ?? result?.createdEmbeddings ?? d.chunks,
-                embeddingModel: model.modelName,
+                embeddedChunks: d.chunks,
+                embeddingModel: model.name,
+                indexingJobId: result.id,
               }
             : d,
         ),
@@ -339,7 +381,7 @@ function LibraryPage() {
           <StatCard
             icon={Layers}
             label="Chunks"
-            value={docs.reduce((t, d) => t + d.chunks, 0)}
+            value={formatTotalChunks(docs)}
           />
         </div>
       </Panel>
@@ -454,7 +496,11 @@ function LibraryPage() {
       {docToDelete ? (
         <ConfirmModal
           actionLabel="Delete document"
-          onCancel={() => setDocToDelete(null)}
+          busy={deleting}
+          busyLabel="Deleting..."
+          onCancel={() => {
+            if (!deleting) setDocToDelete(null)
+          }}
           onConfirm={confirmDeleteDocument}
           title="Delete document?"
         >
@@ -471,7 +517,6 @@ function LibraryPage() {
             defaultWorkspaceId={activeWorkspaceId}
             workspaces={workspaceList}
             onClose={() => setShowUploadModal(false)}
-            onUploaded={handleUploaded}
           />
         ) : null}
       </AnimatePresence>
@@ -604,9 +649,10 @@ function AnimatedFilterSelect({ label, onChange, options, value }) {
 
 // ─── Upload Modal ─────────────────────────────────────────────────────────────
 
-function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploaded }) {
+function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose }) {
   const [files, setFiles] = useState([])
-  const [progresses, setProgresses] = useState({}) // filename → 0-100
+  const [uploadQueue, setUploadQueue] = useState([])
+  const [startedUploadIds, setStartedUploadIds] = useState([])
   const [uploadCourseId, setUploadCourseId] = useState('')
   const [uploadChapterId, setUploadChapterId] = useState('')
   const [uploadWorkspaceId, setUploadWorkspaceId] = useState(defaultWorkspaceId)
@@ -616,7 +662,16 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef(null)
+  const mountedRef = useRef(true)
 
+  useEffect(() => {
+    mountedRef.current = true
+    const unsubscribe = subscribeUploads(setUploadQueue)
+    return () => {
+      mountedRef.current = false
+      unsubscribe()
+    }
+  }, [])
 
   const acceptFiles = useCallback((incoming) => {
     const accepted = Array.from(incoming).filter((f) =>
@@ -644,49 +699,30 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
     setUploading(true)
     setError('')
 
-    const user = getSavedUser()
     const targetWorkspace =
       workspaces.find((w) => w.id === uploadWorkspaceId) ??
       courseWorkspaces.find((w) => w.id === uploadWorkspaceId)
 
-    const uploadedDocs = []
+    const jobs = uploadFiles(files, {
+      workspaceId: uploadWorkspaceId,
+      courseId: uploadCourseId || targetWorkspace?.courseId,
+      chapterId: uploadChapterId || undefined,
+    })
+    setStartedUploadIds(jobs.map((job) => job.id))
 
-    for (const file of files) {
-      setProgresses((prev) => ({ ...prev, [file.name]: 10 }))
-      try {
-        // Fake mid-progress
-        setProgresses((prev) => ({ ...prev, [file.name]: 45 }))
-
-        const doc = await uploadDocument({
-          file,
-          workspaceId: uploadWorkspaceId,
-          courseId: uploadCourseId || targetWorkspace?.courseId,
-          chapterId: uploadChapterId || undefined,
-          uploadedBy: user?.id,
-        })
-
-        // Fetch chunks for the newly uploaded document since backend processes it synchronously
-        const chunks = await getDocumentChunks(doc.id).catch(() => [])
-
-        setProgresses((prev) => ({ ...prev, [file.name]: 100 }))
-        uploadedDocs.push({
-          ...doc,
-          subject: targetWorkspace?.name ?? doc.subject,
-          chunks: chunks.length,
-          embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not prepared',
-        })
-      } catch (err) {
-        setProgresses((prev) => ({ ...prev, [file.name]: -1 })) // -1 = error
-        setError(`Failed to upload "${file.name}": ${err.message}`)
+    Promise.allSettled(jobs.map((job) => job.promise)).then((results) => {
+      if (!mountedRef.current) return
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed) {
+        setError(`Some uploads failed: ${failed.reason?.message ?? 'Unknown upload error'}`)
       }
-    }
-
-    setUploading(false)
-    if (uploadedDocs.length > 0) {
-      onUploaded(uploadedDocs)
-      onClose()
-    }
+      setUploading(false)
+    })
   }
+
+  const modalUploads = startedUploadIds
+    .map((id) => uploadQueue.find((upload) => upload.id === id))
+    .filter(Boolean)
 
   return (
     <motion.div
@@ -820,9 +856,10 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
         {files.length > 0 ? (
           <div className="mb-4 max-h-48 space-y-2 overflow-y-auto">
             {files.map((file) => {
-              const prog = progresses[file.name]
-              const isError = prog === -1
-              const isDone = prog === 100
+              const upload = modalUploads.find((item) => item.name === file.name)
+              const prog = upload?.progress
+              const isError = upload?.status === 'Failed'
+              const isDone = upload && !upload.isUploading && !isError
 
               return (
                 <div
@@ -835,16 +872,22 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
                   <FileText className={isError ? 'text-red-400' : 'text-teal-500'} size={16} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold text-slate-800">{file.name}</p>
-                    {prog != null && prog >= 0 ? (
-                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <motion.div
-                          className={cn(
-                            'h-full rounded-full',
-                            isDone ? 'bg-emerald-400' : 'bg-teal-400',
-                          )}
-                          animate={{ width: `${prog}%` }}
-                          transition={{ duration: 0.3 }}
-                        />
+                    {upload ? (
+                      <div className="mt-1.5">
+                        <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-slate-400">
+                          <span>{isError ? upload.errorMessage : upload.stage}</span>
+                          <span>{isError ? 'Failed' : `${Math.round(prog ?? 0)}%`}</span>
+                        </div>
+                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <motion.div
+                            className={cn(
+                              'h-full rounded-full',
+                              isError ? 'bg-red-400' : isDone ? 'bg-emerald-400' : 'bg-teal-400',
+                            )}
+                            animate={{ width: `${isError ? 100 : prog ?? 0}%` }}
+                            transition={{ duration: 0.3 }}
+                          />
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -876,8 +919,8 @@ function UploadModal({ courses, defaultWorkspaceId, workspaces, onClose, onUploa
         {/* Actions */}
         <div className="flex flex-wrap justify-end gap-2">
 
-          <Button disabled={uploading} onClick={onClose} variant="secondary">
-            Cancel
+          <Button onClick={onClose} variant="secondary">
+            {uploading ? 'Hide' : 'Cancel'}
           </Button>
           <Button
             disabled={uploading || files.length === 0 || !uploadWorkspaceId}
@@ -963,7 +1006,7 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
                 {doc.type}
               </span>
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">
-                {doc.chunks} chunks
+                {formatChunkCount(doc.chunks)} chunks
               </span>
               <StatusBadge status={doc.embeddingStatus} />
               {doc.pages > 0 ? (
@@ -986,23 +1029,29 @@ function DocumentCards({ docs, onDelete, onReindex, reindexingIds = new Set() })
               </Link>
               <IconButton
                 label="Preview file"
-                onClick={() =>
-                  window.open(getDocumentPreviewUrl(doc.id), '_blank', 'noopener,noreferrer')
-                }
+                disabled={!getDocumentPreviewUrl(doc)}
+                onClick={() => {
+                  const url = getDocumentPreviewUrl(doc)
+                  if (url) window.open(url, '_blank', 'noopener,noreferrer')
+                }}
               >
                 <FileText size={15} />
               </IconButton>
-              <IconButton
-                label={isReindexing ? 'Preparing embeddings...' : 'Prepare embeddings'}
-                disabled={isReindexing}
-                onClick={() => onReindex(doc)}
-                className={isReindexing ? 'animate-spin text-teal-500' : ''}
-              >
-                <RefreshCcw size={15} />
-              </IconButton>
-              <IconButton label="Delete" onClick={() => onDelete(doc)}>
-                <Trash2 size={15} />
-              </IconButton>
+              {doc.canEdit ? (
+                <IconButton
+                  label={isReindexing ? 'Indexing document...' : 'Re-index document'}
+                  disabled={isReindexing}
+                  onClick={() => onReindex(doc)}
+                  className={isReindexing ? 'animate-spin text-teal-500' : ''}
+                >
+                  <RefreshCcw size={15} />
+                </IconButton>
+              ) : null}
+              {doc.canDelete ? (
+                <IconButton label="Delete" onClick={() => onDelete(doc)}>
+                  <Trash2 size={15} />
+                </IconButton>
+              ) : null}
             </div>
             </motion.article>
           )
@@ -1076,7 +1125,9 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                   <td className="px-4 py-4">
                     <StatusBadge status={doc.embeddingStatus} />
                   </td>
-                  <td className="px-4 py-4 font-semibold text-slate-600">{doc.chunks}</td>
+                  <td className="px-4 py-4 font-semibold text-slate-600">
+                    {formatChunkCount(doc.chunks)}
+                  </td>
                   <td className="px-4 py-4 font-semibold text-slate-500">{doc.pages || '—'}</td>
                   <td className="px-4 py-4 text-slate-500">{doc.uploadedAt}</td>
                   <td className="px-4 py-4">
@@ -1088,27 +1139,29 @@ function DocumentTable({ compact = false, docs, onDelete, onReindex, reindexingI
                       </Link>
                       <IconButton
                         label="Preview file"
-                        onClick={() =>
-                          window.open(
-                            getDocumentPreviewUrl(doc.id),
-                            '_blank',
-                            'noopener,noreferrer',
-                          )
-                        }
+                        disabled={!getDocumentPreviewUrl(doc)}
+                        onClick={() => {
+                          const url = getDocumentPreviewUrl(doc)
+                          if (url) window.open(url, '_blank', 'noopener,noreferrer')
+                        }}
                       >
                         <FileText size={15} />
                       </IconButton>
-                      <IconButton
-                        label={reindexingIds.has(doc.id) ? 'Preparing embeddings...' : 'Prepare embeddings'}
-                        disabled={reindexingIds.has(doc.id)}
-                        onClick={() => onReindex(doc)}
-                        className={reindexingIds.has(doc.id) ? 'animate-spin text-teal-500' : ''}
-                      >
-                        <RefreshCcw size={15} />
-                      </IconButton>
-                      <IconButton label="Delete" onClick={() => onDelete(doc)}>
-                        <Trash2 size={15} />
-                      </IconButton>
+                      {doc.canEdit ? (
+                        <IconButton
+                          label={reindexingIds.has(doc.id) ? 'Indexing document...' : 'Re-index document'}
+                          disabled={reindexingIds.has(doc.id)}
+                          onClick={() => onReindex(doc)}
+                          className={reindexingIds.has(doc.id) ? 'animate-spin text-teal-500' : ''}
+                        >
+                          <RefreshCcw size={15} />
+                        </IconButton>
+                      ) : null}
+                      {doc.canDelete ? (
+                        <IconButton label="Delete" onClick={() => onDelete(doc)}>
+                          <Trash2 size={15} />
+                        </IconButton>
+                      ) : null}
                     </div>
                   </td>
                 </motion.tr>

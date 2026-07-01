@@ -25,6 +25,7 @@ import {
   getDocumentPages,
   getDocumentPreviewUrl,
 } from '../services/documentService.js'
+import { cn } from '../utils/cn.js'
 
 function DocumentDetailPage() {
   const { id } = useParams()
@@ -80,14 +81,23 @@ function DocumentDetailPage() {
 
     async function checkPreview() {
       if (doc.type === 'PDF') {
-        setPreviewState({ loading: false, available: true, message: '' })
+        setPreviewState({
+          loading: false,
+          available: Boolean(getDocumentFileUrl(doc)),
+          message: getDocumentFileUrl(doc) ? '' : 'No signed file URL was returned by the backend.',
+        })
         return
       }
 
       setPreviewState({ loading: true, available: false, message: '' })
 
       try {
-        const response = await fetch(getDocumentPreviewUrl(doc.id), { method: 'HEAD' })
+        const previewUrl = getDocumentPreviewUrl(doc)
+        if (!previewUrl) {
+          setPreviewState({ loading: false, available: false, message: 'No preview URL is available.' })
+          return
+        }
+        const response = await fetch(previewUrl, { method: 'HEAD' })
         if (!isMounted) return
 
         if (response.ok) {
@@ -121,8 +131,8 @@ function DocumentDetailPage() {
     }
   }, [doc, id])
 
-  const fileUrl = doc ? getDocumentFileUrl(doc.id) : '#'
-  const previewUrl = doc ? (doc.type === 'PDF' ? fileUrl : getDocumentPreviewUrl(doc.id)) : '#'
+  const fileUrl = doc ? (getDocumentFileUrl(doc) ?? '#') : '#'
+  const previewUrl = doc ? (doc.type === 'PDF' ? fileUrl : (getDocumentPreviewUrl(doc) ?? '#')) : '#'
 
   const docChunks = useMemo(() => {
     return chunks.filter((chunk) => {
@@ -150,6 +160,12 @@ function DocumentDetailPage() {
   }, [chunks, activeChunkId])
 
   async function handleDeleteDocument() {
+    if (deleting) return
+    if (!doc?.canDelete) {
+      setError('You do not have permission to delete this document.')
+      setShowDeleteModal(false)
+      return
+    }
     setDeleting(true)
     try {
       await deleteDocument(id)
@@ -282,15 +298,17 @@ function DocumentDetailPage() {
                 {doc.preview || 'No preview summary available.'}
               </p>
 
-              <div className="mt-5 grid grid-cols-2 gap-2">
+              <div className={cn('mt-5 grid gap-2', doc.canDelete ? 'grid-cols-2' : 'grid-cols-1')}>
                 <Button onClick={() => window.open(fileUrl, '_blank', 'noopener,noreferrer')} variant="secondary" className="w-full text-xs justify-center py-2">
                   <ExternalLink size={12} className="mr-1.5" />
                   View original
                 </Button>
-                <Button onClick={() => setShowDeleteModal(true)} variant="danger" className="w-full text-xs justify-center py-2">
-                  <Trash2 size={12} className="mr-1.5" />
-                  Delete
-                </Button>
+                {doc.canDelete ? (
+                  <Button onClick={() => setShowDeleteModal(true)} variant="danger" className="w-full text-xs justify-center py-2">
+                    <Trash2 size={12} className="mr-1.5" />
+                    Delete
+                  </Button>
+                ) : null}
               </div>
             </div>
           </Panel>
@@ -512,7 +530,11 @@ function DocumentDetailPage() {
       {showDeleteModal ? (
         <ConfirmModal
           actionLabel="Delete document"
-          onCancel={() => setShowDeleteModal(false)}
+          busy={deleting}
+          busyLabel="Deleting..."
+          onCancel={() => {
+            if (!deleting) setShowDeleteModal(false)
+          }}
           onConfirm={handleDeleteDocument}
           title="Delete document?"
         >

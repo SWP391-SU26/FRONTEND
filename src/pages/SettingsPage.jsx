@@ -60,9 +60,7 @@ function SettingsPage() {
   }
 
   function handleLogout() {
-    if (user?.id) {
-      logout(user.id).catch(() => {})
-    }
+    logout().catch(() => {})
     clearSession()
     navigate('/login')
   }

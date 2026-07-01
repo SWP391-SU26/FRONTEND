@@ -27,7 +27,12 @@ export async function getWorkspacesByCourse(courseId) {
 export async function createCourse(payload) {
   const result = await request('/courses', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      courseCode: payload.courseCode,
+      courseName: payload.courseName,
+      description: payload.description,
+      isActive: payload.isActive ?? true,
+    }),
   })
   const course = result?.data ?? result
   return toUiCourse(course)
@@ -36,7 +41,12 @@ export async function createCourse(payload) {
 export async function createChapter(courseId, payload) {
   const result = await request(`/courses/${courseId}/chapters`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      chapterTitle: payload.chapterTitle,
+      description: payload.description,
+      orderIndex: payload.orderIndex,
+      isActive: payload.isActive ?? true,
+    }),
   })
   const chapter = result?.data ?? result
   return toUiChapter(chapter)
@@ -45,7 +55,12 @@ export async function createChapter(courseId, payload) {
 export async function createWorkspace(courseId, payload) {
   const result = await request(`/courses/${courseId}/workspaces`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      workspaceTitle: payload.workspaceTitle,
+      description: payload.description,
+      visibility: payload.visibility ?? 'WORKSPACE',
+      isActive: payload.isActive ?? true,
+    }),
   })
   const workspace = result?.data ?? result
   return toUiWorkspace(workspace)
@@ -79,6 +94,7 @@ function toUiWorkspace(workspace) {
     ownerUserId: workspace.ownerUserId,
     name: workspace.workspaceTitle,
     description: workspace.description,
+    visibility: workspace.visibility,
     isActive: workspace.isActive,
   }
 }

@@ -77,7 +77,7 @@ function LandingHeader({ activeTheme = 'hero' }) {
             <a
               className={cn('transition duration-300', theme.navHover)}
               href={item.href}
-              key={item.href}
+              key={item.label}
             >
               {item.label}
             </a>

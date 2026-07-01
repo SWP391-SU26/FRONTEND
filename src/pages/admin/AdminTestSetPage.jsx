@@ -21,14 +21,14 @@ import {
   StatusBadge,
 } from '../../components/ui.jsx'
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
-import { getSavedUser } from '../../services/authService.js'
 import * as courseService from '../../services/courseService.js'
+import { getDocumentsByWorkspace } from '../../services/documentService.js'
 import * as evalService from '../../services/evaluationService.js'
+import { getEmbeddingModels } from '../../services/ragService.js'
 
 const allOption = 'All'
 
 export function AdminTestSetPage() {
-  const user = getSavedUser()
   const [datasets, setDatasets] = useState([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [questions, setQuestions] = useState([])
@@ -36,6 +36,8 @@ export function AdminTestSetPage() {
   const [workspaces, setWorkspaces] = useState([])
   const [experiments, setExperiments] = useState([])
   const [fineTuningFiles, setFineTuningFiles] = useState([])
+  const [embeddingModels, setEmbeddingModels] = useState([])
+  const [corpusDocuments, setCorpusDocuments] = useState([])
 
   const [difficulty, setDifficulty] = useState(allOption)
   const [showAdd, setShowAdd] = useState(false)
@@ -56,7 +58,12 @@ export function AdminTestSetPage() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('')
   const [experimentName, setExperimentName] = useState('')
   const [experimentType, setExperimentType] = useState('RAG')
-  const [experimentModel, setExperimentModel] = useState('')
+  const [experimentEmbeddingModelId, setExperimentEmbeddingModelId] = useState('')
+  const [chunkingStrategy, setChunkingStrategy] = useState('PARAGRAPH_700_120')
+  const [generationMode, setGenerationMode] = useState('RAG_BASE')
+  const [topK, setTopK] = useState('5')
+  const [temperature, setTemperature] = useState('0.2')
+  const [seed, setSeed] = useState('42')
   const [experimentConfig, setExperimentConfig] = useState('')
   const [fineTuningName, setFineTuningName] = useState('')
   const [fineTuningModel, setFineTuningModel] = useState('')
@@ -69,12 +76,13 @@ export function AdminTestSetPage() {
       setLoading(true)
       setError('')
       try {
-        const [datasetList, courseList, workspaceList, experimentList, fileList] = await Promise.all([
+        const [datasetList, courseList, workspaceList, experimentList, fileList, modelList] = await Promise.all([
           evalService.getDatasets(),
           courseService.getCourses(),
           courseService.getWorkspaces(),
           evalService.getExperiments(),
           evalService.getFineTuningFiles().catch(() => []),
+          getEmbeddingModels(),
         ])
 
         if (!active) return
@@ -83,6 +91,8 @@ export function AdminTestSetPage() {
         setWorkspaces(workspaceList)
         setExperiments(experimentList)
         setFineTuningFiles(fileList)
+        setEmbeddingModels(modelList)
+        setExperimentEmbeddingModelId((current) => current || modelList.find((model) => model.isActive)?.id || '')
         setSelectedDatasetId((current) => current || datasetList[0]?.id || '')
         setSelectedCourseId((current) => current || courseList[0]?.id || '')
         setSelectedWorkspaceId((current) => current || workspaceList[0]?.id || '')
@@ -98,6 +108,18 @@ export function AdminTestSetPage() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      queueMicrotask(() => setCorpusDocuments([]))
+      return undefined
+    }
+    let active = true
+    getDocumentsByWorkspace(selectedWorkspaceId)
+      .then((documents) => active && setCorpusDocuments(documents.filter((document) => document.status === 'Indexed')))
+      .catch((requestError) => active && setError(requestError.message))
+    return () => { active = false }
+  }, [selectedWorkspaceId])
 
   useEffect(() => {
     if (!selectedDatasetId) {
@@ -154,17 +176,12 @@ export function AdminTestSetPage() {
   async function handleCreateDataset(event) {
     event.preventDefault()
     if (!newDatasetName.trim() || !selectedCourseId) return
-    if (!user?.id) {
-      setError('Sign in before creating a dataset.')
-      return
-    }
-
     await submitAction(async () => {
       const created = await evalService.createDataset({
         datasetName: newDatasetName.trim(),
         courseId: selectedCourseId,
         workspaceId: selectedWorkspaceId || null,
-        createdBy: user.id,
+        documentIds: corpusDocuments.map((document) => document.id),
       })
       setDatasets((current) => [created, ...current])
       setSelectedDatasetId(created.id)
@@ -176,11 +193,7 @@ export function AdminTestSetPage() {
 
   async function handleCreateExperiment(event) {
     event.preventDefault()
-    if (!selectedDatasetId || !experimentName.trim() || !experimentModel.trim()) return
-    if (!user?.id) {
-      setError('Sign in before creating an experiment.')
-      return
-    }
+    if (!selectedDatasetId || !experimentName.trim() || !experimentEmbeddingModelId) return
 
     const configJson = normalizeJsonInput(experimentConfig)
     if (!configJson) return
@@ -190,14 +203,17 @@ export function AdminTestSetPage() {
         datasetId: selectedDatasetId,
         experimentName: experimentName.trim(),
         experimentType,
-        llmModel: experimentModel.trim(),
+        embeddingModelId: experimentEmbeddingModelId,
+        chunkingStrategy,
+        generationMode,
+        topK,
+        temperature,
+        seed,
         configJson,
-        createdBy: user.id,
       })
       setExperiments((current) => [created, ...current])
       setExperimentName('')
       setExperimentType('RAG')
-      setExperimentModel('')
       setExperimentConfig('')
       setShowExperiment(false)
       setNotice('Experiment record created from the backend API.')
@@ -207,11 +223,6 @@ export function AdminTestSetPage() {
   async function handleCreateFineTuningRecord(event) {
     event.preventDefault()
     if (!selectedDatasetId || !fineTuningName.trim() || !fineTuningModel.trim()) return
-    if (!user?.id) {
-      setError('Sign in before creating a fine-tuning record.')
-      return
-    }
-
     const configJson = normalizeJsonInput(fineTuningConfig)
     if (!configJson) return
 
@@ -219,7 +230,6 @@ export function AdminTestSetPage() {
       const created = await evalService.createFineTuningRecord({
         name: fineTuningName.trim(),
         datasetId: selectedDatasetId,
-        researcherId: user.id,
         llmModel: fineTuningModel.trim(),
         configJson,
       })
@@ -240,7 +250,12 @@ export function AdminTestSetPage() {
 
     try {
       await evalService.runBenchmark(experimentId)
-      setNotice('Benchmark run request was accepted by the backend.')
+      await evalService.waitForExperiment(experimentId, {
+        onProgress: (experiment) => setExperiments((current) => current.map((item) => (
+          item.id === experiment.id ? experiment : item
+        ))),
+      })
+      setNotice('Benchmark completed and results are ready for the Research Dashboard.')
       const refreshed = await evalService.getExperiments()
       setExperiments(refreshed)
     } catch (requestError) {
@@ -275,6 +290,18 @@ export function AdminTestSetPage() {
       setFineTuningFiles(fileList)
       setNotice('Fine-tuning file list refreshed from the backend API.')
     })
+  }
+
+  async function handleImportCsv(event) {
+    const file = event.target.files?.[0]
+    if (!file || !selectedDatasetId) return
+    await submitAction(async () => {
+      const summary = await evalService.importQuestions(selectedDatasetId, file)
+      const refreshed = await evalService.getQuestions(selectedDatasetId)
+      setQuestions(refreshed)
+      setNotice(`Imported ${summary.importedCount ?? refreshed.length} valid questions. Dataset checksum: ${summary.checksum ?? 'pending'}.`)
+    })
+    event.target.value = ''
   }
 
   async function submitAction(action) {
@@ -313,6 +340,11 @@ export function AdminTestSetPage() {
             <Plus size={16} />
             Add question
           </Button>
+          <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 transition hover:border-teal-300 hover:text-teal-700">
+            <FileText size={16} />
+            Import CSV
+            <input accept=".csv,text/csv" className="hidden" disabled={!selectedDatasetId || submitting} onChange={handleImportCsv} type="file" />
+          </label>
           <Button disabled={!selectedDatasetId} onClick={() => setShowExperiment(true)} variant="accent">
             <FlaskConical size={16} />
             Create experiment
@@ -437,11 +469,12 @@ export function AdminTestSetPage() {
             <div className="mt-4">
               {selectedDatasetExperiments.length ? (
                 <DataTable
-                  columns={['Name', 'Type', 'Model', 'Status', 'Actions']}
+                  columns={['Name', 'Mode', 'Embedding', 'Chunking', 'Status', 'Actions']}
                   rows={selectedDatasetExperiments.map((experiment) => [
                     experiment.name,
-                    experiment.method,
-                    experiment.llmModel,
+                    experiment.generationMode || experiment.method,
+                    experiment.embeddingModelName || experiment.embeddingModelId,
+                    experiment.chunkingStrategy,
                     <StatusBadge key="status" status={statusForBadge(experiment.status)} />,
                     <Button
                       disabled={runningExperimentId === experiment.id || experiment.experimentType === 'FINE_TUNING'}
@@ -516,6 +549,9 @@ export function AdminTestSetPage() {
                   </option>
                 ))}
             </LabeledSelect>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-600">
+              {corpusDocuments.length} indexed document{corpusDocuments.length === 1 ? '' : 's'} will be linked as this dataset's benchmark corpus.
+            </div>
             <Button className="w-full" disabled={submitting} type="submit">
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
               Create dataset
@@ -532,7 +568,30 @@ export function AdminTestSetPage() {
               <option value="RAG">RAG</option>
               <option value="FINE_TUNING">Fine-tuning</option>
             </LabeledSelect>
-            <TextInput label="LLM model" onChange={setExperimentModel} placeholder="Model name from backend configuration" required value={experimentModel} />
+            <LabeledSelect label="Embedding model" onChange={setExperimentEmbeddingModelId} required value={experimentEmbeddingModelId}>
+              <option value="">Select an available model</option>
+              {embeddingModels.map((model) => (
+                <option disabled={model.status !== 'AVAILABLE'} key={model.id} value={model.id}>
+                  {model.name} ({model.status})
+                </option>
+              ))}
+            </LabeledSelect>
+            <LabeledSelect label="Chunking strategy" onChange={setChunkingStrategy} required value={chunkingStrategy}>
+              <option value="FIXED_500_50">Fixed 500 / overlap 50</option>
+              <option value="PARAGRAPH_700_120">Paragraph 700 / overlap 120</option>
+              <option value="HEADING_PAGE_900_120">Heading/page 900 / overlap 120</option>
+            </LabeledSelect>
+            <LabeledSelect label="Generation mode" onChange={setGenerationMode} required value={generationMode}>
+              <option value="RAG_EXTRACTIVE">RAG extractive</option>
+              <option value="RAG_BASE">RAG base model</option>
+              <option value="RAG_LORA">RAG + LoRA</option>
+              <option value="FINETUNED_ONLY">Fine-tuned only</option>
+            </LabeledSelect>
+            <div className="grid grid-cols-3 gap-3">
+              <TextInput label="Top K" onChange={setTopK} required value={topK} />
+              <TextInput label="Temperature" onChange={setTemperature} required value={temperature} />
+              <TextInput label="Seed" onChange={setSeed} required value={seed} />
+            </div>
             <TextArea label="Config JSON" onChange={setExperimentConfig} placeholder="{}" value={experimentConfig} />
             <Button className="w-full" disabled={submitting} type="submit">
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <FlaskConical size={16} />}

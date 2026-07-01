@@ -16,17 +16,23 @@ export async function register(payload) {
       fullName: payload.fullName,
       email: payload.email,
       password: payload.password,
-      roleName: payload.roleName ?? 'STUDENT',
     }),
   })
 
   return toSession(auth)
 }
 
-export function logout(userId) {
-  return request(`/auth/logout/${userId}`, {
-    method: 'POST',
-  })
+export async function logout() {
+  const userId = getCurrentUserId()
+  if (userId) {
+    try {
+      return await request(`/auth/logout/${userId}`, { method: 'POST' })
+    } catch (error) {
+      if (![404, 405].includes(error.status)) throw error
+    }
+  }
+
+  return request('/auth/logout', { method: 'POST' })
 }
 
 export function getUsers() {
@@ -45,9 +51,7 @@ export function updateUserRole(userId, roleName) {
 }
 
 export function deleteUser(userId) {
-  const requesterId = getSavedUser()?.id
-  const query = requesterId ? `?requesterId=${encodeURIComponent(requesterId)}` : ''
-  return request(`/auth/users/${userId}${query}`, {
+  return request(`/auth/users/${userId}${withRequesterQuery()}`, {
     method: 'DELETE',
   })
 }
@@ -58,11 +62,17 @@ export function saveSession(session) {
   } else {
     localStorage.removeItem('fstu_access_token')
   }
+  if (session.refreshToken) {
+    localStorage.setItem('fstu_refresh_token', session.refreshToken)
+  } else {
+    localStorage.removeItem('fstu_refresh_token')
+  }
   localStorage.setItem('fstu_user', JSON.stringify(session.user))
 }
 
 export function clearSession() {
   localStorage.removeItem('fstu_access_token')
+  localStorage.removeItem('fstu_refresh_token')
   localStorage.removeItem('fstu_user')
 }
 
@@ -76,7 +86,8 @@ export function getSavedUser() {
 }
 
 export function isAuthenticated() {
-  return Boolean(getSavedUser()?.id)
+  const token = localStorage.getItem('fstu_access_token')
+  return Boolean(token && getSavedUser()?.id && !isJwtExpired(token))
 }
 
 export function isAdminSession() {
@@ -94,11 +105,12 @@ export function getDefaultRouteForUser(user) {
 
 function toSession(auth) {
   const rawUser = auth?.user ?? auth
-  const roles = normalizeRoles(rawUser?.roles)
+  const roles = normalizeRoles(auth?.roles ?? rawUser?.roles)
   const primaryRole = roles[0] ?? 'STUDENT'
 
   return {
-    accessToken: auth?.token ?? auth?.accessToken ?? '',
+    accessToken: auth?.accessToken ?? auth?.token ?? '',
+    refreshToken: auth?.refreshToken ?? '',
     user: {
       id: rawUser?.userId ?? rawUser?.id,
       email: rawUser?.email ?? '',
@@ -106,6 +118,27 @@ function toSession(auth) {
       role: primaryRole.toLowerCase(),
       roles,
     },
+  }
+}
+
+export function getCurrentUserId() {
+  return getSavedUser()?.id ?? null
+}
+
+function withRequesterQuery() {
+  const userId = getCurrentUserId()
+  return userId ? `?requesterId=${encodeURIComponent(userId)}` : ''
+}
+
+function isJwtExpired(token) {
+  try {
+    const [, payload] = token.split('.')
+    if (!payload) return false
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = JSON.parse(atob(normalized))
+    return decoded.exp ? decoded.exp * 1000 <= Date.now() : false
+  } catch {
+    return true
   }
 }
 

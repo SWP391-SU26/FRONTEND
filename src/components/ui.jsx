@@ -202,6 +202,8 @@ export function EmptyState({ title, description, action }) {
 
 export function ConfirmModal({
   actionLabel = 'Confirm',
+  busy = false,
+  busyLabel,
   children,
   onCancel,
   onConfirm,
@@ -227,11 +229,11 @@ export function ConfirmModal({
             {children}
           </div>
           <div className="mt-6 flex justify-end gap-2">
-            <Button onClick={onCancel} variant="secondary">
+            <Button disabled={busy} onClick={onCancel} variant="secondary">
               Cancel
             </Button>
-            <Button onClick={onConfirm} variant="danger">
-              {actionLabel}
+            <Button disabled={busy} onClick={onConfirm} variant="danger">
+              {busy ? (busyLabel ?? actionLabel) : actionLabel}
             </Button>
           </div>
         </motion.div>

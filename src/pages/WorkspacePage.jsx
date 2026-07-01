@@ -22,17 +22,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, IconButton, Panel, StatusBadge } from '../components/ui.jsx'
 import { getSavedUser } from '../services/authService.js'
 import {
-  appendMessage,
-  clearWorkspaceHistory,
-  createConversation,
-  deleteConversation,
-  getConversations,
+  clearLocalConversations,
+  createLocalConversation,
+  getLocalConversations,
+  removeLocalConversation,
+  saveLocalConversation,
 } from '../services/chatHistoryStore.js'
 import {
   askQuestion,
-  createOrGetSession,
-  getCitations,
-  getHistory,
+  createSession,
+  getMessages,
   getNotes,
   saveNote,
 } from '../services/chatService.js'
@@ -41,9 +40,9 @@ import { getDocumentsByWorkspace } from '../services/documentService.js'
 import { cn } from '../utils/cn.js'
 
 const suggestions = [
-  'Summarize the key ideas in this workspace',
-  'Explain the most important concept with citations',
-  'Create five review questions from the documents',
+  'Tóm tắt các ý chính trong workspace này',
+  'Giải thích khái niệm quan trọng nhất và kèm nguồn',
+  'Tạo 5 câu hỏi ôn tập từ tài liệu',
 ]
 
 function WorkspacePage() {
@@ -96,22 +95,28 @@ function WorkspacePage() {
     Promise.all([
       getDocumentsByWorkspace(activeWorkspace),
       getNotes(activeWorkspace),
-      createOrGetSession(user.id, activeWorkspace),
+      createSession(activeWorkspace),
     ])
       .then(async ([nextDocuments, nextNotes, nextSession]) => {
-        const history = await getHistory(nextSession.chatSessionId)
-        const mappedHistory = await Promise.all(
-          history.map(async (message) => {
-            const isAssistant = message.senderRole?.toLowerCase() === 'assistant'
-            const citations = isAssistant ? await getCitations(message.messageId).catch(() => []) : []
-            return toUiMessage(message, citations)
-          }),
-        )
+        const history = await getMessages(nextSession.id)
         if (!active) return
+        let localConversations = getLocalConversations(user.id, activeWorkspace)
+        if (!localConversations.length) {
+          const initialConversation = createLocalConversation({
+            userId: user.id,
+            workspaceId: activeWorkspace,
+            backendSessionId: nextSession.id,
+            messages: history,
+          })
+          localConversations = [initialConversation]
+        }
+        const activeConversation = localConversations[0]
         setDocuments(nextDocuments)
         setNotes(nextNotes)
         setSession(nextSession)
-        setMessages(mappedHistory)
+        setConversations(localConversations)
+        setActiveConvId(activeConversation.id)
+        setMessages(activeConversation.messages ?? [])
       })
       .catch((err) => active && setError(err.message))
       .finally(() => active && setLoading(false))
@@ -120,16 +125,6 @@ function WorkspacePage() {
   }, [activeWorkspace, reloadKey, user?.id])
 
   // ─── Load local history when workspace changes ──────────────────
-  useEffect(() => {
-    if (!activeWorkspace) return
-    const convs = getConversations(activeWorkspace)
-    queueMicrotask(() => {
-      setConversations(convs)
-      // Don't auto-select a conversation; let the chat be "current session" by default
-      setActiveConvId(null)
-    })
-  }, [activeWorkspace])
-
   // ─── Scroll to bottom on new messages ──────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -143,19 +138,7 @@ function WorkspacePage() {
   const canChat = Boolean(session && indexedDocuments.length && !isAnswering)
 
   // ─── Messages to display: either live session or a historical conversation ──
-  const displayMessages = useMemo(() => {
-    if (activeConvId) {
-      const conv = conversations.find((c) => c.id === activeConvId)
-      return (conv?.messages ?? []).map((m, i) => ({
-        id: `hist-${activeConvId}-${i}`,
-        role: m.role,
-        content: m.content,
-        citations: [],
-        isHistory: true,
-      }))
-    }
-    return messages
-  }, [activeConvId, conversations, messages])
+  const displayMessages = messages
 
   // ─── Submit question ───────────────────────────────────────────
   async function handleSubmit(event) {
@@ -167,31 +150,13 @@ function WorkspacePage() {
       return
     }
 
-    // If viewing a historical conversation, switch back to live session first
-    if (activeConvId) setActiveConvId(null)
-
-    // Ensure a live localStorage conversation is active
-    let convId = activeConvId
-    if (!convId) {
-      // Use today's ongoing conv or create one
-      const convs = getConversations(activeWorkspace)
-      const todayConv = convs[0]
-      if (todayConv && Date.now() - todayConv.createdAt < 24 * 60 * 60 * 1000 && todayConv.messages.length === 0) {
-        convId = todayConv.id
-      } else {
-        const newConv = createConversation(activeWorkspace)
-        convId = newConv.id
-        setConversations(getConversations(activeWorkspace))
-      }
-    }
-
-    const optimisticId = `pending-${Date.now()}`
+    const optimisticId = `pending-${globalThis.crypto.randomUUID()}`
     setInput('')
     setError('')
     setIsAnswering(true)
-    setMessages((current) => [...current, { id: optimisticId, role: 'user', content: question }])
-    appendMessage(activeWorkspace, convId, 'user', question)
-
+    const optimisticMessages = [...messages, { id: optimisticId, role: 'user', content: question }]
+    setMessages(optimisticMessages)
+    persistConversationMessages(activeConvId, optimisticMessages)
     try {
       const response = await askQuestion(session.chatSessionId, question)
       const answer = {
@@ -200,16 +165,17 @@ function WorkspacePage() {
         content: response.answer,
         citations: response.citations ?? [],
       }
-      setMessages((current) => [...current, answer])
+      const completedMessages = [...optimisticMessages, answer]
+      setMessages(completedMessages)
       setActiveCitation(answer.citations[0] ?? null)
-      appendMessage(activeWorkspace, convId, 'assistant', response.answer)
+      persistConversationMessages(activeConvId, completedMessages)
     } catch (requestError) {
-      setMessages((current) => current.filter((message) => message.id !== optimisticId))
+      setMessages(messages)
+      persistConversationMessages(activeConvId, messages)
       setInput(question)
       setError(`${requestError.message} Your question is ready to retry.`)
     } finally {
       setIsAnswering(false)
-      setConversations(getConversations(activeWorkspace))
     }
   }
 
@@ -232,7 +198,6 @@ function WorkspacePage() {
     setError('')
     try {
       const created = await saveNote({
-        userId: user.id,
         workspaceId: activeWorkspace,
         noteTitle: noteDraft.title.trim(),
         noteContent: noteDraft.content.trim(),
@@ -246,31 +211,64 @@ function WorkspacePage() {
     }
   }
 
-  function handleDeleteConversation(convId) {
-    deleteConversation(activeWorkspace, convId)
-    const updated = getConversations(activeWorkspace)
+  async function handleDeleteConversation(convId) {
+    const updated = removeLocalConversation(user.id, activeWorkspace, convId)
     setConversations(updated)
-    if (activeConvId === convId) setActiveConvId(null)
+    if (activeConvId === convId) {
+      if (updated.length) {
+        setActiveConvId(updated[0].id)
+        setMessages(updated[0].messages ?? [])
+      } else {
+        handleNewChat()
+      }
+    }
   }
 
   function handleClearHistory() {
-    clearWorkspaceHistory(activeWorkspace)
+    clearLocalConversations(user.id, activeWorkspace)
     setConversations([])
-    setActiveConvId(null)
     setClearConfirm(false)
+    handleNewChat()
   }
 
   function handleSelectConversation(convId) {
-    setActiveConvId(convId === activeConvId ? null : convId)
+    const selected = conversations.find((item) => item.id === convId)
+    if (!selected) {
+      setHistoryOpen(false)
+      return
+    }
+    setActiveConvId(selected.id)
+    setMessages(selected.messages ?? [])
+    setActiveCitation(null)
     setHistoryOpen(false)
   }
 
   function handleNewChat() {
-    setActiveConvId(null)
+    if (!activeWorkspace || !session) return
+    setError('')
+    const created = createLocalConversation({
+      userId: user.id,
+      workspaceId: activeWorkspace,
+      backendSessionId: session.chatSessionId,
+    })
+    setConversations(getLocalConversations(user.id, activeWorkspace))
+    setActiveConvId(created.id)
     setMessages([])
     setInput('')
-    setError('')
     setActiveCitation(null)
+  }
+
+  function persistConversationMessages(conversationId, nextMessages) {
+    if (!conversationId) return
+    const current = conversations.find((item) => item.id === conversationId)
+    if (!current) return
+    const updated = {
+      ...current,
+      messages: nextMessages,
+      updatedAt: new Date().toISOString(),
+    }
+    const nextConversations = saveLocalConversation(user.id, activeWorkspace, updated)
+    setConversations(nextConversations)
   }
 
   return (
@@ -304,10 +302,6 @@ function WorkspacePage() {
         </div>
       </Panel>
 
-      <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold leading-5 text-amber-800">
-        <AlertTriangle className="mt-0.5 shrink-0" size={16} />
-        Development warning: the current backend AI integration does not yet guarantee workspace-isolated retrieval.
-      </div>
       {error ? <ErrorBanner message={error} /> : null}
 
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
@@ -357,31 +351,22 @@ function WorkspacePage() {
         <Panel className="flex h-[720px] flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-200 p-4">
             <div>
-              <p className="text-xs font-black uppercase text-slate-500">
-                {activeConvId ? 'Lịch sử cuộc trò chuyện' : 'Active session'}
-              </p>
+              <p className="text-xs font-black uppercase text-slate-500">Active session</p>
               <h2 className="mt-1 text-base font-black">
-                {activeConvId
-                  ? (conversations.find(c => c.id === activeConvId)?.title ?? 'Conversation')
-                  : (activeWorkspaceData?.name || 'Select a workspace')}
+                {conversations.find((item) => item.id === activeConvId)?.title || activeWorkspaceData?.name || 'Select a workspace'}
               </h2>
             </div>
             <div className="flex items-center gap-2">
-              {activeConvId && (
-                <button
-                  className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-black text-teal-700 transition hover:bg-teal-100"
-                  onClick={handleNewChat}
-                  type="button"
-                >
-                  <Plus size={13} /> Cuộc trò chuyện mới
-                </button>
-              )}
-              {session && !activeConvId ? (
+              <button
+                className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-black text-teal-700 transition hover:bg-teal-100"
+                onClick={handleNewChat}
+                type="button"
+              >
+                <Plus size={13} /> New chat
+              </button>
+              {session ? (
                 <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">Connected</span>
               ) : null}
-              {activeConvId && (
-                <span className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-black text-amber-700">Xem lại</span>
-              )}
             </div>
           </div>
 
@@ -409,7 +394,7 @@ function WorkspacePage() {
             )}
             {isAnswering ? (
               <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
-                <Loader2 className="animate-spin text-primary" size={17} />Generating a source-grounded answer...
+                <Loader2 className="animate-spin text-primary" size={17} />Đang tạo câu trả lời dựa trên tài liệu...
               </div>
             ) : null}
             <div ref={messagesEndRef} />
@@ -417,32 +402,22 @@ function WorkspacePage() {
 
           {/* Input */}
           <div className="border-t border-slate-200 bg-white/70 p-4">
-            {activeConvId ? (
-              <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs font-semibold text-amber-700">
-                Đang xem cuộc trò chuyện cũ.{' '}
-                <button className="font-black underline" onClick={handleNewChat} type="button">
-                  Nhấn đây để chat mới
+            <div className="mb-3 flex flex-wrap gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 hover:border-teal-300"
+                  key={suggestion}
+                  onClick={() => setInput(suggestion)}
+                  type="button"
+                >
+                  {suggestion}
                 </button>
-              </div>
-            ) : (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {suggestions.map((suggestion) => (
-                  <button
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 hover:border-teal-300"
-                    key={suggestion}
-                    onClick={() => setInput(suggestion)}
-                    type="button"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            )}
+              ))}
+            </div>
             <form className="flex gap-2" onSubmit={handleSubmit}>
               <textarea
                 aria-label="Question"
                 className="min-h-12 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100 disabled:opacity-50"
-                disabled={Boolean(activeConvId)}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
@@ -451,17 +426,15 @@ function WorkspacePage() {
                   }
                 }}
                 placeholder={
-                  activeConvId
-                    ? 'Đang xem lịch sử — nhấn "Cuộc trò chuyện mới" để tiếp tục chat'
-                    : indexedDocuments.length
-                      ? 'Ask from the indexed documents...'
-                      : 'This workspace needs a processed document'
+                  indexedDocuments.length
+                    ? 'Hỏi bằng tiếng Việt từ các tài liệu đã index...'
+                    : 'Workspace này cần ít nhất một tài liệu đã index'
                 }
                 value={input}
               />
               <Button
                 aria-label="Send question"
-                disabled={!canChat || !input.trim() || Boolean(activeConvId)}
+                disabled={!canChat || !input.trim()}
                 size="icon"
                 type="submit"
               >
@@ -584,12 +557,12 @@ function WorkspacePage() {
                             {conv.title}
                           </p>
                           <p className="mt-0.5 text-xs font-semibold text-slate-400">
-                            {conv.messages.length} tin nhắn · {formatRelativeTime(conv.createdAt)}
+                            {conv.messageCount} messages · {formatRelativeTime(conv.updatedAt)}
                           </p>
                         </div>
                         <button
                           aria-label="Xoá"
-                          className="invisible ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500 group-hover:visible"
+                          className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500 sm:invisible sm:group-hover:visible"
                           onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id) }}
                           type="button"
                         >
@@ -655,6 +628,8 @@ function WorkspacePage() {
 
 function Message({ copied, message, onCitation, onCopy, onSaveNote }) {
   const isUser = message.role === 'user'
+  const parsedAnswer = parseAssistantAnswer(message.content, message.citations)
+  const isRefusal = !isUser && isRefusalAnswer(message.content)
   return (
     <motion.article
       animate={{ opacity: 1, y: 0 }}
@@ -662,20 +637,39 @@ function Message({ copied, message, onCitation, onCopy, onSaveNote }) {
       initial={{ opacity: 0, y: 10 }}
     >
       {!isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-white"><Bot size={17} /></div> : null}
-      <div className={cn('max-w-[82%] rounded-lg p-4', isUser ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white', message.isHistory && 'opacity-80')}>
-        <p className="whitespace-pre-wrap text-sm font-semibold leading-6">{message.content}</p>
+      <div className={cn('max-w-[82%] rounded-lg p-4', isUser ? 'bg-slate-900 text-white' : isRefusal ? 'border border-amber-200 bg-amber-50/70' : 'border border-slate-200 bg-white', message.isHistory && 'opacity-80')}>
+        {isUser ? (
+          <p className="whitespace-pre-wrap text-sm font-semibold leading-6">{message.content}</p>
+        ) : (
+          <AssistantAnswer parsedAnswer={parsedAnswer} refusal={isRefusal} />
+        )}
         {message.citations?.length ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {message.citations.map((citation, index) => (
               <button
                 className="rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-black text-teal-700"
-                key={`${citation.documentTitle}-${index}`}
+                key={citation.id || `${citation.documentTitle}-${citation.pageStart}-${index}`}
                 onClick={() => onCitation(citation)}
                 type="button"
               >
-                {citation.documentTitle || `Source ${index + 1}`} / {pageLabel(citation)}
+                {citation.documentTitle || `Nguồn ${index + 1}`} / {pageLabel(citation)}
               </button>
             ))}
+          </div>
+        ) : null}
+        {!isUser && parsedAnswer.inlineSources.length ? (
+          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+            <p className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">Nguồn trong câu trả lời</p>
+            <div className="flex flex-wrap gap-2">
+              {parsedAnswer.inlineSources.map((source) => (
+                <span
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600"
+                  key={source}
+                >
+                  {source}
+                </span>
+              ))}
+            </div>
           </div>
         ) : null}
         {!isUser && !message.isHistory ? (
@@ -688,6 +682,70 @@ function Message({ copied, message, onCitation, onCopy, onSaveNote }) {
       {isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary"><UserRound size={17} /></div> : null}
     </motion.article>
   )
+}
+
+function AssistantAnswer({ parsedAnswer, refusal }) {
+  const paragraphs = splitAnswerParagraphs(parsedAnswer.body)
+
+  if (refusal) {
+    return (
+      <div className="flex gap-3">
+        <AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} />
+        <div>
+          <p className="text-sm font-black text-amber-900">Chưa tìm thấy bằng chứng trong tài liệu</p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-amber-800">
+            {parsedAnswer.body}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3 text-sm font-semibold leading-7 text-slate-900">
+      {paragraphs.map((paragraph, index) => (
+        <p key={`${paragraph}-${index}`}>{paragraph}</p>
+      ))}
+    </div>
+  )
+}
+
+function parseAssistantAnswer(content, citations = []) {
+  const raw = String(content ?? '').trim()
+  const sourceMatch = raw.match(/\n?\s*Nguồn:\s*/i)
+  if (!sourceMatch) return { body: raw, inlineSources: [] }
+
+  const body = raw.slice(0, sourceMatch.index).trim()
+  const sourceText = raw.slice(sourceMatch.index + sourceMatch[0].length).trim()
+  const inlineSources = sourceText
+    .split(/;\s*|\]\s*,\s*\[/)
+    .map((item) => item.replace(/^\[/, '').replace(/\]$/, '').trim())
+    .filter(Boolean)
+
+  if (citations?.length) return { body, inlineSources: [] }
+  return { body, inlineSources }
+}
+
+function splitAnswerParagraphs(content) {
+  const text = String(content ?? '').trim()
+  if (!text) return ['Không có nội dung trả lời.']
+
+  const explicitParagraphs = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)
+  if (explicitParagraphs.length > 1) return explicitParagraphs
+
+  return text
+    .replace(/\s+-\s+/g, '\n- ')
+    .split(/\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function isRefusalAnswer(content) {
+  const normalized = String(content ?? '').toLowerCase()
+  return normalized.includes('không tìm thấy nội dung liên quan') ||
+    normalized.includes('không tìm thấy bằng chứng') ||
+    normalized.includes('outside the scope') ||
+    normalized.includes('out of scope')
 }
 
 function NoteDialog({ draft, onChange, onClose, onSubmit, saving }) {
@@ -723,24 +781,17 @@ function NoteDialog({ draft, onChange, onClose, onSubmit, saving }) {
   )
 }
 
-function toUiMessage(message, citations = []) {
-  return {
-    id: message.messageId,
-    role: message.senderRole?.toLowerCase() === 'assistant' ? 'assistant' : 'user',
-    content: message.messageContent,
-    citations,
-  }
-}
-
 function pageLabel(citation) {
-  if (!citation.pageStart) return 'Page unavailable'
+  if (!citation.pageStart) return 'Chưa có trang'
   return citation.pageEnd && citation.pageEnd !== citation.pageStart
-    ? `Pages ${citation.pageStart}-${citation.pageEnd}`
-    : `Page ${citation.pageStart}`
+    ? `Trang ${citation.pageStart}-${citation.pageEnd}`
+    : `Trang ${citation.pageStart}`
 }
 
 function formatRelativeTime(ts) {
-  const diff = Date.now() - ts
+  const value = typeof ts === 'number' ? ts : new Date(ts).getTime()
+  if (!Number.isFinite(value)) return 'recently'
+  const diff = Date.now() - value
   const minutes = Math.floor(diff / 60000)
   if (minutes < 1) return 'vừa xong'
   if (minutes < 60) return `${minutes} phút trước`
@@ -748,7 +799,7 @@ function formatRelativeTime(ts) {
   if (hours < 24) return `${hours} giờ trước`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days} ngày trước`
-  return new Date(ts).toLocaleDateString('vi-VN')
+  return new Date(value).toLocaleDateString('vi-VN')
 }
 
 function LoadingSpinner() {

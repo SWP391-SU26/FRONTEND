@@ -6,6 +6,7 @@ import {
   BookOpen,
   Brain,
   Database,
+  Download,
   Eye,
   FileText,
   FlaskConical,
@@ -29,9 +30,15 @@ import {
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
 import { deleteUser, getSavedUser, getUsers, updateUserRole } from '../../services/authService.js'
 import { getCourses } from '../../services/courseService.js'
-import { deleteDocument, getDocumentChunks, getDocuments } from '../../services/documentService.js'
-import { getExperimentResults, getExperiments } from '../../services/evaluationService.js'
-import { getActiveEmbeddingModel, prepareEmbeddings } from '../../services/ragService.js'
+import { deleteDocument, getDocuments, reindexDocument, waitForIndexingJob } from '../../services/documentService.js'
+import {
+  exportEvaluationReport,
+  getEvaluationCapabilities,
+  getEvaluationDashboard,
+  getExperimentResults,
+  getExperiments,
+} from '../../services/evaluationService.js'
+import { getActiveEmbeddingModel } from '../../services/ragService.js'
 
 const allOption = 'All'
 const roles = ['ADMIN', 'TEACHER', 'STUDENT', 'RESEARCHER', 'USER']
@@ -212,6 +219,7 @@ export function AdminDocumentsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deletingId, setDeletingId] = useState('')
   const [reindexingId, setReindexingId] = useState('')
 
   useEffect(() => {
@@ -220,17 +228,7 @@ export function AdminDocumentsPage() {
       try {
         const items = await getDocuments()
         if (!active) return
-        const docsWithChunks = await Promise.all(
-          items.map(async (doc) => {
-            const chunks = await getDocumentChunks(doc.id).catch(() => [])
-            return {
-              ...doc,
-              chunks: chunks.length,
-              embeddingModel: chunks.length > 0 ? doc.embeddingModel : 'Not prepared',
-            }
-          }),
-        )
-        if (active) setDocs(docsWithChunks)
+        if (active) setDocs(items)
       } catch (requestError) {
         if (active) setError(requestError.message)
       } finally {
@@ -257,12 +255,20 @@ export function AdminDocumentsPage() {
     try {
       const model = await getActiveEmbeddingModel()
       if (!model) throw new Error('No active embedding model found.')
-      const result = await prepareEmbeddings(doc.id, doc.workspaceId, model.embeddingModelId)
+      const job = await reindexDocument(doc.id, model.embeddingModelId)
+      await waitForIndexingJob(job.id, {
+        onProgress: (currentJob) => setDocs((current) => current.map((item) => item.id === doc.id ? {
+          ...item,
+          status: 'Processing',
+          embeddingStatus: `${currentJob.stage} ${currentJob.progress}%`,
+        } : item)),
+      })
       setDocs((current) => current.map((item) => item.id === doc.id ? {
         ...item,
+        status: 'Indexed',
         embeddingStatus: 'Prepared',
-        chunks: result?.totalChunks ?? result?.createdEmbeddings ?? item.chunks,
-        embeddingModel: model.modelName,
+        embeddedChunks: item.chunks,
+        embeddingModel: model.name,
       } : item))
     } catch (requestError) {
       setError(requestError.message)
@@ -272,13 +278,22 @@ export function AdminDocumentsPage() {
   }
 
   async function confirmDelete() {
-    if (!deleteTarget) return
+    if (!deleteTarget || deletingId) return
+    if (!deleteTarget.canDelete) {
+      setError('You do not have permission to delete this document.')
+      setDeleteTarget(null)
+      return
+    }
+    setDeletingId(deleteTarget.id)
+    setError('')
     try {
       await deleteDocument(deleteTarget.id)
       setDocs((current) => current.filter((doc) => doc.id !== deleteTarget.id))
       setDeleteTarget(null)
     } catch (requestError) {
       setError(requestError.message)
+    } finally {
+      setDeletingId('')
     }
   }
 
@@ -303,13 +318,24 @@ export function AdminDocumentsPage() {
             doc.pages,
             <RowActions key="actions">
               <IconButton disabled={reindexingId === doc.id} label="Prepare embeddings" onClick={() => reindexDoc(doc)}><RefreshCcw className={reindexingId === doc.id ? 'animate-spin' : ''} size={15} /></IconButton>
-              <IconButton label="Delete" onClick={() => setDeleteTarget(doc)}><Trash2 size={15} /></IconButton>
+              {doc.canDelete ? (
+                <IconButton disabled={deletingId === doc.id} label="Delete" onClick={() => setDeleteTarget(doc)}><Trash2 size={15} /></IconButton>
+              ) : null}
             </RowActions>,
           ])}
         />
       ) : <EmptyState title="No documents" description="The backend returned no documents for the current requester." />}
       {deleteTarget ? (
-        <ConfirmModal actionLabel="Delete document" onCancel={() => setDeleteTarget(null)} onConfirm={confirmDelete} title="Delete document?">
+        <ConfirmModal
+          actionLabel="Delete document"
+          busy={deletingId === deleteTarget.id}
+          busyLabel="Deleting..."
+          onCancel={() => {
+            if (!deletingId) setDeleteTarget(null)
+          }}
+          onConfirm={confirmDelete}
+          title="Delete document?"
+        >
           "{deleteTarget.displayName}" will be removed from the backend.
         </ConfirmModal>
       ) : null}
@@ -319,6 +345,8 @@ export function AdminDocumentsPage() {
 
 export function AdminResearchDashboardPage() {
   const [experiments, setExperiments] = useState([])
+  const [dashboard, setDashboard] = useState({ summary: {}, configurations: [], recommended: null, metricMetadata: {} })
+  const [capabilities, setCapabilities] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedExpId, setSelectedExpId] = useState('')
@@ -327,10 +355,12 @@ export function AdminResearchDashboardPage() {
 
   useEffect(() => {
     let active = true
-    getExperiments()
-      .then((list) => {
+    Promise.all([getExperiments(), getEvaluationDashboard(), getEvaluationCapabilities()])
+      .then(([list, dashboardData, capabilityData]) => {
         if (!active) return
         setExperiments(list)
+        setDashboard(dashboardData)
+        setCapabilities(capabilityData)
         if (list.length > 0) {
           const completed = list.find((experiment) => experiment.status === 'COMPLETED')
           setSelectedExpId(completed?.id || list[0].id)
@@ -361,7 +391,10 @@ export function AdminResearchDashboardPage() {
   }, [selectedExpId])
 
   const currentMetrics = useMemo(() => {
-    if (results.length === 0) return null
+    if (results.length === 0) {
+      const aggregate = dashboard.configurations.find((item) => item.experimentId === selectedExpId)
+      return aggregate?.metrics ?? null
+    }
     const count = results.length
     const totals = results.reduce((acc, result) => ({
       faithfulness: acc.faithfulness + (result.faithfulness ?? 0),
@@ -393,14 +426,31 @@ export function AdminResearchDashboardPage() {
       avgLatencyMs: Math.round(totals.latencyMs / count),
       avgCost: Number((totals.cost / count).toFixed(6)),
     }
-  }, [results])
+  }, [dashboard.configurations, results, selectedExpId])
 
   const selectedExperiment = experiments.find((experiment) => experiment.id === selectedExpId)
   const completedExperiments = experiments.filter((experiment) => experiment.status === 'COMPLETED').length
   const runningExperiments = experiments.filter((experiment) => experiment.status === 'RUNNING').length
 
+  async function handleExportReport() {
+    try {
+      const blob = await exportEvaluationReport('csv')
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'evaluation_dashboard.csv'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }
+
   return (
     <CrudPage
+      actions={<Button onClick={handleExportReport} variant="secondary"><Download size={16} />Export CSV</Button>}
       description="Analyze experiment records and result rows returned by backend evaluation APIs."
       icon={BarChart3}
       title="Research Dashboard"
@@ -461,6 +511,18 @@ export function AdminResearchDashboardPage() {
             <MetricCard icon={Database} label="Running" value={runningExperiments} />
           </div>
 
+          {capabilities ? (
+            <Panel className="p-4">
+              <SectionTitle
+                icon={Gauge}
+                title="Evaluation capability"
+                subtitle={capabilities.officialRagasEnabled || capabilities.official_ragas_enabled
+                  ? `Official RAGAS · ${capabilities.judgeModel ?? capabilities.judge_model ?? 'local judge'}`
+                  : 'Official RAGAS is not ready; proxy metrics are not presented as RAGAS.'}
+              />
+            </Panel>
+          ) : null}
+
           {currentMetrics ? (
             <Panel className="p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -477,6 +539,26 @@ export function AdminResearchDashboardPage() {
                 <ScoreStat label="Context recall" value={currentMetrics.contextRecall} />
                 <ScoreStat label="Answer correctness" value={currentMetrics.answerCorrectness} />
                 <ScoreStat label="Semantic similarity" value={currentMetrics.semanticSimilarity} />
+              </div>
+            </Panel>
+          ) : null}
+
+          {dashboard.configurations.length ? (
+            <Panel className="overflow-hidden p-5">
+              <SectionTitle icon={BarChart3} title="Configuration comparison" subtitle={`Recommended: ${dashboard.recommended?.name ?? dashboard.recommended ?? 'pending'}`} />
+              <div className="mt-4">
+                <DataTable
+                  columns={['Configuration', 'Embedding', 'Chunking', 'Mode', 'Faithfulness', 'Relevance', 'Latency']}
+                  rows={dashboard.configurations.map((item) => [
+                    item.name ?? item.configuration,
+                    item.embeddingModelName ?? item.embeddingModel,
+                    item.chunkingStrategy,
+                    item.generationMode,
+                    `${Math.round((item.metrics?.faithfulness ?? item.faithfulness ?? 0) * 100)}%`,
+                    `${Math.round((item.metrics?.answerRelevance ?? item.answerRelevance ?? 0) * 100)}%`,
+                    `${item.metrics?.averageLatencyMs ?? item.averageLatencyMs ?? 0} ms`,
+                  ])}
+                />
               </div>
             </Panel>
           ) : null}

@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import LandingPage from './pages/LandingPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
@@ -17,6 +18,7 @@ import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import WorkspacePage from './pages/WorkspacePage.jsx'
 import CourseManagementPage from './pages/admin/CourseManagementPage.jsx'
+import { UploadProgressPopup } from './components/UploadProgressPopup.jsx'
 import {
   getDefaultRouteForUser,
   getSavedUser,
@@ -25,8 +27,19 @@ import {
 } from './services/authService.js'
 
 function App() {
+  const [, setAuthVersion] = useState(0)
+
+  useEffect(() => {
+    const handleUnauthorized = () => setAuthVersion((value) => value + 1)
+    window.addEventListener('fstu:unauthorized', handleUnauthorized)
+    return () => window.removeEventListener('fstu:unauthorized', handleUnauthorized)
+  }, [])
+
   return (
-    <Routes>
+    <>
+      <ScrollToTop />
+      <UploadProgressPopup />
+      <Routes>
       <Route element={<LandingPage />} path="/" />
       <Route element={<PublicOnly><LoginPage /></PublicOnly>} path="/login" />
       <Route element={<PublicOnly><RegisterPage /></PublicOnly>} path="/register" />
@@ -55,8 +68,32 @@ function App() {
         <Route element={<DocumentDetailPage />} path="/library/documents/:id" />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
-    </Routes>
+      </Routes>
+    </>
   )
+}
+
+function ScrollToTop() {
+  const { pathname } = useLocation()
+
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
+  }, [])
+
+  useEffect(() => {
+    const resetScroll = () => window.scrollTo({ top: 0, left: 0 })
+    resetScroll()
+    const frameId = window.requestAnimationFrame(resetScroll)
+    const timeoutIds = [0, 50, 250].map((delay) => window.setTimeout(resetScroll, delay))
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId))
+    }
+  }, [pathname])
+
+  return null
 }
 
 function PublicOnly({ children }) {
