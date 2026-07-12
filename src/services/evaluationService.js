@@ -14,11 +14,12 @@ export async function createDataset({ datasetName, courseId, workspaceId, docume
 }
 
 export async function importQuestions(datasetId, file) {
-  void datasetId
-  void file
-  const error = new Error('CSV import is not available in the current backend API.')
-  error.status = 501
-  return Promise.reject(error)
+  const formData = new FormData()
+  formData.append('file', file)
+  return request(`/evaluation/datasets/${datasetId}/questions/import`, {
+    method: 'POST',
+    body: formData,
+  })
 }
 
 export async function getQuestions(datasetId) {

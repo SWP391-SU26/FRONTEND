@@ -104,6 +104,35 @@ body:has(.notebook-grid) {
   overflow: hidden;
 }
 
+html:has(.workspace-fixed-page),
+body:has(.workspace-fixed-page) {
+  overflow: hidden;
+}
+
+.workspace-fixed-page {
+  height: calc(100vh - 102px);
+}
+
+.workspace-chat-grid {
+  overflow: hidden;
+}
+
+@media (max-width: 1279px) {
+  html:has(.workspace-fixed-page),
+  body:has(.workspace-fixed-page) {
+    overflow: auto;
+  }
+
+  .workspace-fixed-page {
+    height: auto;
+    min-height: calc(100vh - 102px);
+  }
+
+  .workspace-chat-grid {
+    overflow: visible;
+  }
+}
+
 .notebook-grid {
   height: calc(100vh - 88px);
   display: grid;
@@ -747,3 +776,39 @@ a {
   transform-origin: top center;
 }
 
+
+.app-header {
+  pointer-events: none;
+}
+
+.app-header-shell,
+.app-header a,
+.app-header button {
+  pointer-events: auto;
+}
+
+.app-header-shell {
+  border: 1px solid transparent;
+  border-radius: 26px;
+}
+
+.app-header-scrolled .app-header-shell {
+  border-color: rgba(226, 232, 240, 0.92);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    0 18px 46px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(22px);
+}
+
+.app-header-scrolled .nav-pill {
+  border-color: rgba(226, 232, 240, 0.86);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: none;
+}
+
+@media (max-width: 640px) {
+  .app-header-shell {
+    grid-template-columns: auto 1fr auto;
+  }
+}

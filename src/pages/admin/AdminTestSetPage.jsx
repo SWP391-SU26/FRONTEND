@@ -247,6 +247,9 @@ export function AdminTestSetPage() {
     setRunningExperimentId(experimentId)
     setError('')
     setNotice('')
+    setExperiments((current) => current.map((item) => (
+      item.id === experimentId ? { ...item, status: 'RUNNING' } : item
+    )))
 
     try {
       await evalService.runBenchmark(experimentId)
@@ -259,7 +262,9 @@ export function AdminTestSetPage() {
       const refreshed = await evalService.getExperiments()
       setExperiments(refreshed)
     } catch (requestError) {
-      setNotice(requestError.message)
+      setError(requestError.message)
+      const refreshed = await evalService.getExperiments().catch(() => null)
+      if (refreshed) setExperiments(refreshed)
     } finally {
       setRunningExperimentId('')
     }
@@ -477,7 +482,7 @@ export function AdminTestSetPage() {
                     experiment.chunkingStrategy,
                     <StatusBadge key="status" status={statusForBadge(experiment.status)} />,
                     <Button
-                      disabled={runningExperimentId === experiment.id || experiment.experimentType === 'FINE_TUNING'}
+                      disabled={runningExperimentId === experiment.id}
                       key="run"
                       onClick={() => handleRunBenchmark(experiment.id)}
                       size="sm"

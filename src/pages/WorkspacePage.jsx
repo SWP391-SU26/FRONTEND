@@ -272,8 +272,8 @@ function WorkspacePage() {
   }
 
   return (
-    <div className="space-y-4">
-      <Panel className="overflow-hidden p-5">
+    <div className="workspace-fixed-page flex min-h-0 flex-col gap-4">
+      <Panel className="workspace-hero-panel shrink-0 overflow-hidden p-5">
         <div className="pointer-events-none absolute inset-0 opacity-55"><div className="abstract-canvas" /></div>
         <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -304,9 +304,9 @@ function WorkspacePage() {
 
       {error ? <ErrorBanner message={error} /> : null}
 
-      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
+      <div className="workspace-chat-grid grid min-h-0 flex-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
         {/* Left panel: workspaces + documents */}
-        <Panel className="p-4 xl:min-h-[720px]">
+        <Panel className="min-h-0 overflow-y-auto p-4 [scrollbar-color:theme(colors.teal.300)_transparent] [scrollbar-width:thin]">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-black">Workspaces</h2>
             <BookOpenCheck className="text-primary" size={18} />
@@ -348,7 +348,7 @@ function WorkspacePage() {
         </Panel>
 
         {/* Center panel: chat */}
-        <Panel className="flex h-[720px] flex-col overflow-hidden">
+        <Panel className="flex min-h-0 flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-200 p-4">
             <div>
               <p className="text-xs font-black uppercase text-slate-500">Active session</p>
@@ -445,7 +445,7 @@ function WorkspacePage() {
         </Panel>
 
         {/* Right panel: citations + notes */}
-        <Panel className="p-4 xl:min-h-[720px]">
+        <Panel className="min-h-0 overflow-y-auto p-4 [scrollbar-color:theme(colors.teal.300)_transparent] [scrollbar-width:thin]">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-black">Citation</h2>
             <FileText className="text-primary" size={18} />
