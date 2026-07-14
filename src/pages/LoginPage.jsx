@@ -122,9 +122,9 @@ function LoginPage() {
             />
             Remember me
           </label>
-          <span className="font-bold text-slate-400" title="Password reset is not available in the current backend API.">
-            Password reset unavailable
-          </span>
+          <Link className="font-bold text-primary hover:text-primary/75" to="/reset-password">
+            Forgot password?
+          </Link>
         </div>
 
         <div className="animate-auth-field animation-delay-450">

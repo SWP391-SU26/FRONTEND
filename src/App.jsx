@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import LandingPage from './pages/LandingPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
+import ResetPasswordPage from './pages/ResetPasswordPage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
 import MainLayout from './layouts/MainLayout.jsx'
@@ -43,6 +44,7 @@ function App() {
       <Route element={<LandingPage />} path="/" />
       <Route element={<PublicOnly><LoginPage /></PublicOnly>} path="/login" />
       <Route element={<PublicOnly><RegisterPage /></PublicOnly>} path="/register" />
+      <Route element={<PublicOnly><ResetPasswordPage /></PublicOnly>} path="/reset-password" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/settings" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/profile" />
       <Route element={<RequireAdmin><AdminLayout /></RequireAdmin>} path="/admin">

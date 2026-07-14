@@ -22,6 +22,13 @@ export async function register(payload) {
   return toSession(auth)
 }
 
+export function forgotPassword(email) {
+  return request('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
 export async function logout() {
   const userId = getCurrentUserId()
   if (userId) {

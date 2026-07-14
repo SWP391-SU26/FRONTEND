@@ -7,9 +7,10 @@ export async function getDatasets() {
 
 export async function createDataset({ datasetName, courseId, workspaceId, documentIds = [] }) {
   void documentIds
+  const createdBy = requireCurrentUserId('Sign in before creating a dataset.')
   return toUiDataset(await request('/evaluation/datasets', {
     method: 'POST',
-    body: JSON.stringify({ datasetName, courseId, workspaceId, createdBy: getCurrentUserId() }),
+    body: JSON.stringify({ datasetName, courseId, workspaceId, createdBy }),
   }))
 }
 
@@ -47,26 +48,23 @@ export async function getExperiment(experimentId) {
 }
 
 export async function createExperiment(payload) {
+  const createdBy = requireCurrentUserId('Sign in before creating an experiment.')
   return toUiExperiment(await request('/evaluation/experiments', {
     method: 'POST',
     body: JSON.stringify({
       datasetId: payload.datasetId,
       experimentName: payload.experimentName,
       experimentType: payload.experimentType,
-      llmModel: payload.llmModel || payload.embeddingModelName || payload.generationMode || 'rag',
+      llmModel: payload.llmModel,
       configJson: payload.configJson || '{}',
-      createdBy: getCurrentUserId(),
+      createdBy,
     }),
   }))
 }
 
 export async function runBenchmark(experimentId) {
   const result = await request(`/evaluation/experiments/${experimentId}/run`, { method: 'POST' })
-  return {
-    jobId: result.jobId ?? result.benchmarkJobId ?? result.experimentId ?? experimentId,
-    experimentId: result.experimentId ?? experimentId,
-    status: result.status ?? 'COMPLETED',
-  }
+  return toUiExperiment(result)
 }
 
 export async function waitForExperiment(experimentId, { onProgress, timeoutMs = 1800000 } = {}) {
@@ -114,9 +112,10 @@ export function getEvaluationCapabilities() {
 }
 
 export function createFineTuningRecord({ name, datasetId, llmModel, configJson }) {
+  const researcherId = requireCurrentUserId('Sign in before creating a fine-tuning record.')
   return request('/fine-tuning/experiments', {
     method: 'POST',
-    body: JSON.stringify({ name, datasetId, researcherId: getCurrentUserId(), llmModel, configJson }),
+    body: JSON.stringify({ name, datasetId, researcherId, llmModel, configJson }),
   }).then(toUiExperiment)
 }
 
@@ -145,6 +144,12 @@ function unwrapList(result) {
   return Array.isArray(result) ? result : (result?.items ?? result?.content ?? [])
 }
 
+function requireCurrentUserId(message) {
+  const userId = getCurrentUserId()
+  if (!userId) throw new Error(message)
+  return userId
+}
+
 function toUiDataset(ds) {
   return {
     id: ds.datasetId,
@@ -158,7 +163,9 @@ function toUiDataset(ds) {
     documentIds: ds.documentIds ?? [],
     questionCount: ds.questionCount ?? 0,
     checksum: ds.checksum ?? null,
+    createdBy: ds.createdBy,
     createdAt: ds.createdAt,
+    updatedAt: ds.updatedAt,
   }
 }
 
@@ -187,9 +194,13 @@ function toUiExperiment(e) {
     id: e.experimentId,
     experimentId: e.experimentId,
     datasetId: e.datasetId,
+    courseId: e.courseId,
+    workspaceId: e.workspaceId,
     name: e.experimentName,
+    experimentName: e.experimentName,
     experimentType: type,
     method: type === 'FINE_TUNING' ? 'Fine-tuning' : 'RAG',
+    llmModel: e.llmModel,
     embeddingModelId: e.embeddingModelId,
     embeddingModelName: e.embeddingModelName,
     chunkingStrategy: e.chunkingStrategy,
@@ -197,12 +208,15 @@ function toUiExperiment(e) {
     topK: e.topK,
     temperature: e.temperature,
     seed: e.seed,
+    fineTunedModelName: e.fineTunedModelName,
     configJson: e.configJson,
     status: e.status || 'PENDING',
     progress: Number(e.progress ?? 0),
+    createdBy: e.createdBy,
     startedAt: e.startedAt,
     completedAt: e.completedAt,
     createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
     errorMessage: e.errorMessage ?? null,
   }
 }
@@ -210,9 +224,14 @@ function toUiExperiment(e) {
 function toUiExperimentResult(result) {
   return {
     id: result.experimentResultId,
+    experimentResultId: result.experimentResultId,
     experimentId: result.experimentId,
     evaluationQuestionId: result.evaluationQuestionId,
+    questionText: result.questionText,
+    groundTruthAnswer: result.groundTruthAnswer,
     generatedAnswer: result.generatedAnswer,
+    retrievedContextJson: result.retrievedContextJson,
+    citationsJson: result.citationsJson,
     contexts: result.contexts ?? parseJson(result.retrievedContextJson, []),
     citations: result.citations ?? parseJson(result.citationsJson, []),
     faithfulness: result.faithfulness,
@@ -222,6 +241,9 @@ function toUiExperimentResult(result) {
     answerCorrectness: result.answerCorrectness,
     semanticSimilarity: result.semanticSimilarity,
     latencyMs: result.latencyMs,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    totalTokens: result.totalTokens,
     cost: result.cost,
     errorMessage: result.errorMessage,
     createdAt: result.createdAt,

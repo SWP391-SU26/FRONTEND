@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
@@ -6,8 +7,6 @@ import {
   BookOpen,
   Brain,
   Database,
-  Download,
-  Eye,
   FileText,
   FlaskConical,
   Gauge,
@@ -32,9 +31,6 @@ import { deleteUser, getSavedUser, getUsers, updateUserRole } from '../../servic
 import { getCourses } from '../../services/courseService.js'
 import { deleteDocument, getDocuments, reindexDocument, waitForIndexingJob } from '../../services/documentService.js'
 import {
-  exportEvaluationReport,
-  getEvaluationCapabilities,
-  getEvaluationDashboard,
   getExperimentResults,
   getExperiments,
 } from '../../services/evaluationService.js'
@@ -344,26 +340,27 @@ export function AdminDocumentsPage() {
 }
 
 export function AdminResearchDashboardPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedExperimentId = searchParams.get('experimentId') || ''
   const [experiments, setExperiments] = useState([])
-  const [dashboard, setDashboard] = useState({ summary: {}, configurations: [], recommended: null, metricMetadata: {} })
-  const [capabilities, setCapabilities] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedExpId, setSelectedExpId] = useState('')
   const [results, setResults] = useState([])
   const [loadingResults, setLoadingResults] = useState(false)
+  const capabilities = null
+  const dashboard = { configurations: [] }
 
   useEffect(() => {
     let active = true
-    Promise.all([getExperiments(), getEvaluationDashboard(), getEvaluationCapabilities()])
-      .then(([list, dashboardData, capabilityData]) => {
+    getExperiments()
+      .then((list) => {
         if (!active) return
         setExperiments(list)
-        setDashboard(dashboardData)
-        setCapabilities(capabilityData)
         if (list.length > 0) {
+          const requested = list.find((experiment) => experiment.id === requestedExperimentId)
           const completed = list.find((experiment) => experiment.status === 'COMPLETED')
-          setSelectedExpId(completed?.id || list[0].id)
+          setSelectedExpId(requested?.id || completed?.id || list[0].id)
         }
       })
       .catch((requestError) => active && setError(requestError.message))
@@ -371,7 +368,7 @@ export function AdminResearchDashboardPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [requestedExperimentId])
 
   useEffect(() => {
     if (!selectedExpId) {
@@ -391,10 +388,7 @@ export function AdminResearchDashboardPage() {
   }, [selectedExpId])
 
   const currentMetrics = useMemo(() => {
-    if (results.length === 0) {
-      const aggregate = dashboard.configurations.find((item) => item.experimentId === selectedExpId)
-      return aggregate?.metrics ?? null
-    }
+    if (results.length === 0) return null
     const count = results.length
     const totals = results.reduce((acc, result) => ({
       faithfulness: acc.faithfulness + (result.faithfulness ?? 0),
@@ -405,6 +399,9 @@ export function AdminResearchDashboardPage() {
       answerCorrectness: acc.answerCorrectness + (result.answerCorrectness ?? 0),
       latencyMs: acc.latencyMs + (result.latencyMs ?? 0),
       cost: acc.cost + Number(result.cost ?? 0),
+      inputTokens: acc.inputTokens + (result.inputTokens ?? 0),
+      outputTokens: acc.outputTokens + (result.outputTokens ?? 0),
+      totalTokens: acc.totalTokens + (result.totalTokens ?? 0),
     }), {
       faithfulness: 0,
       answerRelevance: 0,
@@ -414,6 +411,9 @@ export function AdminResearchDashboardPage() {
       answerCorrectness: 0,
       latencyMs: 0,
       cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
     })
 
     return {
@@ -425,32 +425,23 @@ export function AdminResearchDashboardPage() {
       answerCorrectness: Number((totals.answerCorrectness / count).toFixed(2)),
       avgLatencyMs: Math.round(totals.latencyMs / count),
       avgCost: Number((totals.cost / count).toFixed(6)),
+      avgInputTokens: Math.round(totals.inputTokens / count),
+      avgOutputTokens: Math.round(totals.outputTokens / count),
+      avgTotalTokens: Math.round(totals.totalTokens / count),
     }
-  }, [dashboard.configurations, results, selectedExpId])
+  }, [results])
 
   const selectedExperiment = experiments.find((experiment) => experiment.id === selectedExpId)
   const completedExperiments = experiments.filter((experiment) => experiment.status === 'COMPLETED').length
   const runningExperiments = experiments.filter((experiment) => experiment.status === 'RUNNING').length
 
-  async function handleExportReport() {
-    try {
-      const blob = await exportEvaluationReport('csv')
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'evaluation_dashboard.csv'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (requestError) {
-      setError(requestError.message)
-    }
+  function handleExperimentChange(experimentId) {
+    setSelectedExpId(experimentId)
+    setSearchParams({ experimentId })
   }
 
   return (
     <CrudPage
-      actions={<Button onClick={handleExportReport} variant="secondary"><Download size={16} />Export CSV</Button>}
       description="Analyze experiment records and result rows returned by backend evaluation APIs."
       icon={BarChart3}
       title="Research Dashboard"
@@ -476,6 +467,12 @@ export function AdminResearchDashboardPage() {
                     <span className="rounded-lg border border-slate-200 bg-white/72 px-2.5 py-1 font-medium text-slate-600">
                       {selectedExperiment.llmModel || 'No model name'}
                     </span>
+                    <span className="rounded-lg border border-slate-200 bg-white/72 px-2.5 py-1 font-medium text-slate-600">
+                      Dataset: {selectedExperiment.datasetId || 'Not set'}
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white/72 px-2.5 py-1 font-medium text-slate-600">
+                      Workspace: {selectedExperiment.workspaceId || 'Not set'}
+                    </span>
                     <StatusBadge status={statusForBadge(selectedExperiment.status)} />
                   </div>
                 ) : null}
@@ -486,7 +483,7 @@ export function AdminResearchDashboardPage() {
                   Experiment
                   <select
                     className="mt-1 h-11 w-full rounded-xl border border-border bg-white/90 px-3 text-sm font-medium text-slate-900 shadow-[0_10px_24px_rgba(15,118,110,.06)] outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100"
-                    onChange={(event) => setSelectedExpId(event.target.value)}
+                    onChange={(event) => handleExperimentChange(event.target.value)}
                     value={selectedExpId}
                   >
                     {experiments.map((experiment) => (
@@ -527,9 +524,12 @@ export function AdminResearchDashboardPage() {
             <Panel className="p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <SectionTitle icon={BarChart3} title="Backend Result Metrics" subtitle="Averages computed only from real experiment result rows." />
-                <div className="grid grid-cols-2 gap-2 text-right">
+                <div className="grid grid-cols-2 gap-2 text-right md:grid-cols-5">
                   <MiniStat label="Avg latency" value={`${currentMetrics.avgLatencyMs} ms`} />
                   <MiniStat label="Avg cost" value={`$${currentMetrics.avgCost}`} />
+                  <MiniStat label="Input tokens" value={currentMetrics.avgInputTokens} />
+                  <MiniStat label="Output tokens" value={currentMetrics.avgOutputTokens} />
+                  <MiniStat label="Total tokens" value={currentMetrics.avgTotalTokens} />
                 </div>
               </div>
               <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -565,13 +565,22 @@ export function AdminResearchDashboardPage() {
 
           {loadingResults ? <Loading label="Loading experiment results" /> : results.length > 0 ? (
             <DataTable
-              columns={['Question', 'Generated Answer', 'Faithfulness', 'Relevance', 'Latency', 'Status']}
+              columns={['Question', 'Generated Answer', 'Metrics', 'Latency', 'Tokens', 'Status']}
               rows={results.map((result, index) => [
-                <div className="max-w-xs truncate font-semibold text-slate-800" key="question">Q{index + 1}: {result.evaluationQuestionId ?? 'Backend question'}</div>,
-                <div className="max-w-md line-clamp-2 leading-6 text-slate-600" key="answer">{result.generatedAnswer || 'No generated answer returned.'}</div>,
-                <span className="font-semibold text-slate-800" key="faithfulness">{Math.round((result.faithfulness ?? 0) * 100)}%</span>,
-                <span className="font-semibold text-slate-800" key="relevance">{Math.round((result.answerRelevance ?? 0) * 100)}%</span>,
+                <ResultQuestion
+                  groundTruth={result.groundTruthAnswer}
+                  index={index}
+                  key="question"
+                  question={result.questionText}
+                  questionId={result.evaluationQuestionId}
+                />,
+                <div className="max-w-md space-y-2 leading-6 text-slate-600" key="answer">
+                  <p className="line-clamp-3">{result.generatedAnswer || 'No generated answer returned.'}</p>
+                  {result.citations?.length ? <p className="text-xs font-semibold text-slate-500">Citations: {result.citations.length}</p> : null}
+                </div>,
+                <ResultMetrics key="metrics" result={result} />,
                 <span className="text-slate-600" key="latency">{result.latencyMs ?? 0} ms</span>,
+                <span className="text-slate-600" key="tokens">{result.totalTokens ?? 0} total</span>,
                 result.errorMessage
                   ? <span className="font-semibold text-red-600" key="error">{result.errorMessage}</span>
                   : <span className="font-semibold text-emerald-700" key="ok">Success</span>,
@@ -580,13 +589,53 @@ export function AdminResearchDashboardPage() {
           ) : (
             <EmptyState
               title="No experiment results"
-              description="The selected experiment has no result rows from the backend yet. Create an experiment record from Test Set / Ground Truth, then run the benchmark when the backend execution endpoint is available."
+              description={emptyResultsDescription(selectedExperiment)}
             />
           )}
         </div>
       )}
     </CrudPage>
   )
+}
+
+function ResultQuestion({ groundTruth, index, question, questionId }) {
+  return (
+    <div className="max-w-sm space-y-2">
+      <p className="font-semibold text-slate-800">Q{index + 1}: {question || questionId || 'Backend question'}</p>
+      {groundTruth ? <p className="line-clamp-3 text-xs font-medium leading-5 text-slate-500">Ground truth: {groundTruth}</p> : null}
+    </div>
+  )
+}
+
+function ResultMetrics({ result }) {
+  const items = [
+    ['Faithfulness', result.faithfulness],
+    ['Relevance', result.answerRelevance],
+    ['Precision', result.contextPrecision],
+    ['Recall', result.contextRecall],
+    ['Correctness', result.answerCorrectness],
+    ['Similarity', result.semanticSimilarity],
+  ]
+
+  return (
+    <div className="grid min-w-44 gap-1 text-xs font-semibold text-slate-600">
+      {items.map(([label, value]) => (
+        <span className="flex justify-between gap-3" key={label}>
+          <span>{label}</span>
+          <span className="text-slate-900">{Math.round((value ?? 0) * 100)}%</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function emptyResultsDescription(experiment) {
+  if (!experiment) return 'Select an experiment to load backend result rows.'
+  if (experiment.status === 'PENDING') return 'Run this experiment from Test Set / Ground Truth to generate result rows.'
+  if (experiment.status === 'FAILED') return 'The experiment failed. Check the benchmark error, then rerun it from Test Set / Ground Truth.'
+  if (experiment.status === 'COMPLETED') return 'The experiment completed, but no result rows were returned.'
+  if (experiment.status === 'RUNNING') return 'The experiment is running. Refresh after the backend finishes writing result rows.'
+  return 'The selected experiment has no result rows from the backend yet.'
 }
 
 function CrudPage({ actions, children, description, icon, title }) {

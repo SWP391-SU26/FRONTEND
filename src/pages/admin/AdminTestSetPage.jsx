@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  BarChart3,
   Brain,
   ClipboardList,
   Download,
@@ -12,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Button,
   EmptyState,
@@ -29,6 +31,7 @@ import { getEmbeddingModels } from '../../services/ragService.js'
 const allOption = 'All'
 
 export function AdminTestSetPage() {
+  const navigate = useNavigate()
   const [datasets, setDatasets] = useState([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [questions, setQuestions] = useState([])
@@ -50,6 +53,7 @@ export function AdminTestSetPage() {
   const [runningExperimentId, setRunningExperimentId] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [completedExperimentId, setCompletedExperimentId] = useState('')
 
   const [newQuestionText, setNewQuestionText] = useState('')
   const [newGroundTruth, setNewGroundTruth] = useState('')
@@ -58,6 +62,7 @@ export function AdminTestSetPage() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('')
   const [experimentName, setExperimentName] = useState('')
   const [experimentType, setExperimentType] = useState('RAG')
+  const [experimentLlmModel, setExperimentLlmModel] = useState('java-rag')
   const [experimentEmbeddingModelId, setExperimentEmbeddingModelId] = useState('')
   const [chunkingStrategy, setChunkingStrategy] = useState('PARAGRAPH_700_120')
   const [generationMode, setGenerationMode] = useState('RAG_BASE')
@@ -95,7 +100,11 @@ export function AdminTestSetPage() {
         setExperimentEmbeddingModelId((current) => current || modelList.find((model) => model.isActive)?.id || '')
         setSelectedDatasetId((current) => current || datasetList[0]?.id || '')
         setSelectedCourseId((current) => current || courseList[0]?.id || '')
-        setSelectedWorkspaceId((current) => current || workspaceList[0]?.id || '')
+        setSelectedWorkspaceId((current) => {
+          if (current) return current
+          const firstCourseId = courseList[0]?.id
+          return workspaceList.find((workspace) => workspace.courseId === firstCourseId)?.id || workspaceList[0]?.id || ''
+        })
       } catch (requestError) {
         if (active) setError(requestError.message)
       } finally {
@@ -146,6 +155,10 @@ export function AdminTestSetPage() {
     () => datasets.find((dataset) => dataset.id === selectedDatasetId) || null,
     [datasets, selectedDatasetId],
   )
+  const workspaceOptions = useMemo(
+    () => workspaces.filter((workspace) => !selectedCourseId || workspace.courseId === selectedCourseId),
+    [selectedCourseId, workspaces],
+  )
 
   const visibleQuestions = selectedDatasetId ? questions : []
   const filteredQuestions = visibleQuestions.filter((item) => (
@@ -154,6 +167,8 @@ export function AdminTestSetPage() {
     !item.difficulty
   ))
   const selectedDatasetExperiments = experiments.filter((experiment) => experiment.datasetId === selectedDatasetId)
+  const selectedDatasetHasWorkspace = Boolean(selectedDataset?.workspaceId)
+  const canRunSelectedDatasetBenchmark = Boolean(selectedDatasetId && selectedDatasetHasWorkspace && questions.length > 0)
 
   async function handleAddQuestion(event) {
     event.preventDefault()
@@ -175,12 +190,15 @@ export function AdminTestSetPage() {
 
   async function handleCreateDataset(event) {
     event.preventDefault()
-    if (!newDatasetName.trim() || !selectedCourseId) return
+    if (!newDatasetName.trim() || !selectedCourseId || !selectedWorkspaceId) {
+      setError(!selectedWorkspaceId ? 'Select a workspace before creating a dataset.' : 'Complete the required dataset fields.')
+      return
+    }
     await submitAction(async () => {
       const created = await evalService.createDataset({
         datasetName: newDatasetName.trim(),
         courseId: selectedCourseId,
-        workspaceId: selectedWorkspaceId || null,
+        workspaceId: selectedWorkspaceId,
         documentIds: corpusDocuments.map((document) => document.id),
       })
       setDatasets((current) => [created, ...current])
@@ -193,9 +211,9 @@ export function AdminTestSetPage() {
 
   async function handleCreateExperiment(event) {
     event.preventDefault()
-    if (!selectedDatasetId || !experimentName.trim() || !experimentEmbeddingModelId) return
+    if (!selectedDatasetId || !experimentName.trim() || !experimentLlmModel.trim()) return
 
-    const configJson = normalizeJsonInput(experimentConfig)
+    const configJson = buildExperimentConfigJson()
     if (!configJson) return
 
     await submitAction(async () => {
@@ -203,17 +221,13 @@ export function AdminTestSetPage() {
         datasetId: selectedDatasetId,
         experimentName: experimentName.trim(),
         experimentType,
-        embeddingModelId: experimentEmbeddingModelId,
-        chunkingStrategy,
-        generationMode,
-        topK,
-        temperature,
-        seed,
+        llmModel: experimentLlmModel.trim(),
         configJson,
       })
       setExperiments((current) => [created, ...current])
       setExperimentName('')
       setExperimentType('RAG')
+      setExperimentLlmModel('java-rag')
       setExperimentConfig('')
       setShowExperiment(false)
       setNotice('Experiment record created from the backend API.')
@@ -243,8 +257,12 @@ export function AdminTestSetPage() {
   }
 
   async function handleRunBenchmark(experimentId) {
-    if (!experimentId) return
+    if (!experimentId || !canRunSelectedDatasetBenchmark) {
+      setError(runDisabledReason())
+      return
+    }
     setRunningExperimentId(experimentId)
+    setCompletedExperimentId('')
     setError('')
     setNotice('')
     setExperiments((current) => current.map((item) => (
@@ -252,13 +270,14 @@ export function AdminTestSetPage() {
     )))
 
     try {
-      await evalService.runBenchmark(experimentId)
-      await evalService.waitForExperiment(experimentId, {
-        onProgress: (experiment) => setExperiments((current) => current.map((item) => (
-          item.id === experiment.id ? experiment : item
-        ))),
-      })
+      const updated = await evalService.runBenchmark(experimentId)
+      if (updated) {
+        setExperiments((current) => current.map((item) => (
+          item.id === updated.id ? updated : item
+        )))
+      }
       setNotice('Benchmark completed and results are ready for the Research Dashboard.')
+      setCompletedExperimentId(updated?.id || experimentId)
       const refreshed = await evalService.getExperiments()
       setExperiments(refreshed)
     } catch (requestError) {
@@ -333,6 +352,72 @@ export function AdminTestSetPage() {
     }
   }
 
+  function handleCourseChange(courseId) {
+    setSelectedCourseId(courseId)
+    const nextWorkspaces = workspaces.filter((workspace) => !courseId || workspace.courseId === courseId)
+    setSelectedWorkspaceId((current) => (
+      nextWorkspaces.some((workspace) => workspace.id === current) ? current : nextWorkspaces[0]?.id || ''
+    ))
+  }
+
+  function buildExperimentConfigJson() {
+    const baseValue = experimentConfig.trim() || '{}'
+    try {
+      const config = JSON.parse(baseValue)
+      if (experimentEmbeddingModelId) config.embeddingModelId = experimentEmbeddingModelId
+      if (chunkingStrategy) config.chunkingStrategy = chunkingStrategy
+      if (generationMode) config.generationMode = generationMode
+      if (topK !== '') config.topK = Number(topK)
+      if (temperature !== '') config.temperature = Number(temperature)
+      if (seed !== '') config.seed = Number(seed)
+      return JSON.stringify(config)
+    } catch {
+      setError('Config JSON must be valid JSON.')
+      return ''
+    }
+  }
+
+  function runDisabledReason() {
+    if (!selectedDatasetId) return 'Select a dataset before running a benchmark.'
+    if (!selectedDatasetHasWorkspace) return 'Cannot run benchmark because the selected dataset has no workspace.'
+    if (questions.length === 0) return 'Cannot run benchmark because dataset has no questions.'
+    return 'Benchmark cannot be started for this experiment.'
+  }
+
+  function openResearchDashboard(experimentId) {
+    navigate(`/admin/research-dashboard?experimentId=${encodeURIComponent(experimentId)}`)
+  }
+
+  function renderQuestionSection() {
+    if (loadingQuestions) return <Loading label="Loading questions" />
+
+    if (!filteredQuestions.length) {
+      return (
+        <EmptyState
+          action={<Button disabled={!selectedDatasetId} onClick={() => setShowAdd(true)}><Plus size={16} />Add question</Button>}
+          description="No ground-truth questions were returned for this dataset."
+          title="No questions"
+        />
+      )
+    }
+
+    return (
+      <DataTable
+        columns={['Order', 'Question', 'Difficulty', 'Type', 'Expected page', 'Ground truth']}
+        rows={filteredQuestions.map((item, index) => [
+          item.questionNo || index + 1,
+          <span className="block max-w-xl whitespace-pre-wrap" key="question">{item.question}</span>,
+          item.difficulty || 'MEDIUM',
+          item.type || 'FACTUAL',
+          item.expectedPage ?? 'Not set',
+          <span className="block max-w-xl whitespace-pre-wrap" key="ground-truth">
+            {item.groundTruth}
+          </span>,
+        ])}
+      />
+    )
+  }
+
   return (
     <CrudPage
       actions={
@@ -369,7 +454,17 @@ export function AdminTestSetPage() {
       title="Test Set / Ground Truth"
     >
       {error ? <Alert message={error} /> : null}
-      {notice ? <Notice message={notice} /> : null}
+      {notice ? (
+        <Notice
+          action={completedExperimentId ? (
+            <Button onClick={() => openResearchDashboard(completedExperimentId)} size="sm">
+              <BarChart3 size={14} />
+              Open Research Dashboard
+            </Button>
+          ) : null}
+          message={notice}
+        />
+      ) : null}
 
       {loading ? <Loading label="Loading Workflow 5 data" /> : (
         <div className="space-y-5">
@@ -397,6 +492,8 @@ export function AdminTestSetPage() {
               ))}
             </SelectField>
           </Toolbar>
+
+          {renderQuestionSection()}
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
             <Panel className="overflow-hidden p-5">
@@ -438,27 +535,6 @@ export function AdminTestSetPage() {
             </Panel>
           </div>
 
-          {loadingQuestions ? <Loading label="Loading questions" /> : filteredQuestions.length ? (
-            <DataTable
-              columns={['Order', 'Question', 'Difficulty', 'Type', 'Ground truth']}
-              rows={filteredQuestions.map((item, index) => [
-                item.questionNo || index + 1,
-                item.question,
-                item.difficulty || 'MEDIUM',
-                item.type || 'FACTUAL',
-                <span className="line-clamp-2" key="ground-truth">
-                  {item.groundTruth}
-                </span>,
-              ])}
-            />
-          ) : (
-            <EmptyState
-              action={<Button disabled={!selectedDatasetId} onClick={() => setShowAdd(true)}><Plus size={16} />Add question</Button>}
-              description="No ground-truth questions were returned for this dataset."
-              title="No questions"
-            />
-          )}
-
           <Panel className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <SectionTitle
@@ -474,23 +550,33 @@ export function AdminTestSetPage() {
             <div className="mt-4">
               {selectedDatasetExperiments.length ? (
                 <DataTable
-                  columns={['Name', 'Mode', 'Embedding', 'Chunking', 'Status', 'Actions']}
+                  columns={['Name', 'Type', 'LLM model', 'Status', 'Actions']}
                   rows={selectedDatasetExperiments.map((experiment) => [
                     experiment.name,
-                    experiment.generationMode || experiment.method,
-                    experiment.embeddingModelName || experiment.embeddingModelId,
-                    experiment.chunkingStrategy,
+                    experiment.method,
+                    experiment.llmModel || experiment.fineTunedModelName || 'No model name',
                     <StatusBadge key="status" status={statusForBadge(experiment.status)} />,
-                    <Button
-                      disabled={runningExperimentId === experiment.id}
-                      key="run"
-                      onClick={() => handleRunBenchmark(experiment.id)}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      {runningExperimentId === experiment.id ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
-                      Run benchmark
-                    </Button>,
+                    <RowActions key="actions">
+                      <Button
+                        disabled={runningExperimentId === experiment.id || !canRunSelectedDatasetBenchmark || experiment.status === 'RUNNING'}
+                        onClick={() => handleRunBenchmark(experiment.id)}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        {runningExperimentId === experiment.id ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
+                        Run benchmark
+                      </Button>
+                      {experiment.status === 'COMPLETED' || completedExperimentId === experiment.id ? (
+                        <Button
+                          onClick={() => openResearchDashboard(experiment.id)}
+                          size="sm"
+                          variant="accent"
+                        >
+                          <BarChart3 size={14} />
+                          View research
+                        </Button>
+                      ) : null}
+                    </RowActions>,
                   ])}
                 />
               ) : (
@@ -536,7 +622,7 @@ export function AdminTestSetPage() {
               required
               value={newDatasetName}
             />
-            <LabeledSelect label="Course" onChange={setSelectedCourseId} required value={selectedCourseId}>
+            <LabeledSelect label="Course" onChange={handleCourseChange} required value={selectedCourseId}>
               <option value="">Select course</option>
               {courses.map((course) => (
                 <option key={course.id} value={course.id}>
@@ -545,19 +631,22 @@ export function AdminTestSetPage() {
               ))}
             </LabeledSelect>
             <LabeledSelect label="Workspace" onChange={setSelectedWorkspaceId} value={selectedWorkspaceId}>
-              <option value="">No workspace</option>
-              {workspaces
-                .filter((workspace) => !selectedCourseId || workspace.courseId === selectedCourseId)
-                .map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.name}
-                  </option>
-                ))}
+              <option value="">Select workspace</option>
+              {workspaceOptions.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
             </LabeledSelect>
+            {!workspaceOptions.length ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">
+                No workspace exists for the selected course. Create a workspace before creating a dataset.
+              </p>
+            ) : null}
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-600">
               {corpusDocuments.length} indexed document{corpusDocuments.length === 1 ? '' : 's'} will be linked as this dataset's benchmark corpus.
             </div>
-            <Button className="w-full" disabled={submitting} type="submit">
+            <Button className="w-full" disabled={submitting || !workspaceOptions.length} type="submit">
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
               Create dataset
             </Button>
@@ -573,7 +662,9 @@ export function AdminTestSetPage() {
               <option value="RAG">RAG</option>
               <option value="FINE_TUNING">Fine-tuning</option>
             </LabeledSelect>
-            <LabeledSelect label="Embedding model" onChange={setExperimentEmbeddingModelId} required value={experimentEmbeddingModelId}>
+            <TextInput label="LLM model" onChange={setExperimentLlmModel} placeholder="java-rag" required value={experimentLlmModel} />
+            <TextArea label="Config JSON" onChange={setExperimentConfig} placeholder="{}" value={experimentConfig} />
+            <LabeledSelect label="Embedding model helper" onChange={setExperimentEmbeddingModelId} value={experimentEmbeddingModelId}>
               <option value="">Select an available model</option>
               {embeddingModels.map((model) => (
                 <option disabled={model.status !== 'AVAILABLE'} key={model.id} value={model.id}>
@@ -597,7 +688,9 @@ export function AdminTestSetPage() {
               <TextInput label="Temperature" onChange={setTemperature} required value={temperature} />
               <TextInput label="Seed" onChange={setSeed} required value={seed} />
             </div>
-            <TextArea label="Config JSON" onChange={setExperimentConfig} placeholder="{}" value={experimentConfig} />
+            <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-600">
+              Helper values are saved inside Config JSON before the request is sent.
+            </p>
             <Button className="w-full" disabled={submitting} type="submit">
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <FlaskConical size={16} />}
               Create experiment
@@ -642,7 +735,7 @@ function Toolbar({ children }) {
 
 function DataTable({ columns, rows }) {
   return (
-    <Panel className="overflow-hidden">
+    <div className="os-panel overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[920px] border-collapse text-left text-sm">
           <thead className="bg-white/62 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
@@ -652,21 +745,19 @@ function DataTable({ columns, rows }) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((row, index) => (
-              <motion.tr
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65"
-                initial={{ opacity: 0, y: 8 }}
-                key={index}
-                transition={{ delay: index * 0.025, duration: 0.22 }}
-              >
+              <tr className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65" key={index}>
                 {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top leading-6 text-slate-700" key={cellIndex}>{cell}</td>)}
-              </motion.tr>
+              </tr>
             ))}
           </tbody>
         </table>
       </div>
-    </Panel>
+    </div>
   )
+}
+
+function RowActions({ children }) {
+  return <div className="flex flex-wrap items-center gap-2">{children}</div>
 }
 
 function DrawerModal({ children, onClose, title }) {
@@ -763,8 +854,13 @@ function Alert({ message }) {
   return <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{message}</div>
 }
 
-function Notice({ message }) {
-  return <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm font-semibold text-teal-800">{message}</div>
+function Notice({ action, message }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm font-semibold text-teal-800">
+      <span>{message}</span>
+      {action}
+    </div>
+  )
 }
 
 function statusForBadge(status) {
