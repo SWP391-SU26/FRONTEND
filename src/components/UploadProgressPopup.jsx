@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CheckCircle2, ChevronDown, FileText, Loader2, UploadCloud, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FileText, Loader2, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { clearFinishedUploads, removeUpload, subscribe } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
@@ -19,8 +19,6 @@ export function UploadProgressPopup() {
   const activeCount = visibleUploads.filter(isActiveUpload).length
   const failedCount = visibleUploads.filter((upload) => upload.status === 'Failed').length
   const completedCount = visibleUploads.filter(isCompletedUpload).length
-  const totalCount = visibleUploads.length
-
   const hasNewUpload = visibleUploads.some((upload) => upload.createdAt > dismissedBefore)
 
   if (visibleUploads.length === 0 || !hasNewUpload) return null
@@ -40,7 +38,7 @@ export function UploadProgressPopup() {
             </div>
             <div className="min-w-0">
               <h2 className="truncate text-sm font-black text-slate-950">
-                {activeCount > 0 ? `Uploading ${activeCount} of ${totalCount} file${totalCount > 1 ? 's' : ''}` : 'Upload finished'}
+                {activeCount > 0 ? `${activeCount} file task${activeCount > 1 ? 's' : ''} in progress` : 'File activity finished'}
               </h2>
               <p className="text-xs font-semibold text-slate-500">
                 {completedCount} completed{failedCount ? `, ${failedCount} failed` : ''}
@@ -121,7 +119,7 @@ function UploadProgressItem({ upload }) {
             failed ? 'bg-red-100 text-red-600' : completed ? 'bg-emerald-100 text-emerald-600' : 'bg-white text-teal-600',
           )}
         >
-          {failed ? <XCircle size={17} /> : completed ? <CheckCircle2 size={17} /> : <FileText size={17} />}
+          {failed ? <XCircle size={17} /> : completed ? <CheckCircle2 size={17} /> : upload.action === 'DELETE' ? <Trash2 size={17} /> : <FileText size={17} />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">

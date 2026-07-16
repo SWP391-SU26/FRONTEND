@@ -5,6 +5,7 @@ import {
   Clock3,
   FileArchive,
   Loader2,
+  PlayCircle,
   Search,
   XCircle,
 } from 'lucide-react'
@@ -15,8 +16,12 @@ const statusStyles = {
   Processed: 'border-teal-200 bg-teal-50 text-teal-700',
   Prepared: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   'Not prepared': 'border-slate-200 bg-slate-50 text-slate-600',
+  'Ready to run': 'border-sky-200 bg-sky-50 text-sky-700',
+  Queued: 'border-violet-200 bg-violet-50 text-violet-700',
+  Cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
   Pending: 'border-amber-200 bg-amber-50 text-amber-700',
   Processing: 'border-amber-200 bg-amber-50 text-amber-700',
+  'No text': 'border-amber-200 bg-amber-50 text-amber-800',
   Uploaded: 'border-teal-200 bg-teal-50 text-teal-700',
   Failed: 'border-red-200 bg-red-50 text-red-700',
 }
@@ -26,8 +31,12 @@ const statusIcons = {
   Processed: CheckCircle2,
   Prepared: CheckCircle2,
   'Not prepared': Clock3,
+  'Ready to run': PlayCircle,
+  Queued: Clock3,
+  Cancelled: XCircle,
   Pending: Clock3,
   Processing: Loader2,
+  'No text': AlertTriangle,
   Uploaded: Clock3,
   Failed: XCircle,
 }
@@ -216,6 +225,9 @@ export function ConfirmModal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        onMouseDown={(event) => {
+          if (!busy && event.target === event.currentTarget) onCancel()
+        }}
       >
         <motion.div
           className="os-panel w-full max-w-md p-5 shadow-2xl"
@@ -224,13 +236,24 @@ export function ConfirmModal({
           exit={{ opacity: 0, y: 16, scale: 0.98 }}
           transition={{ type: 'spring', stiffness: 360, damping: 30 }}
         >
-          <h2 className="text-lg font-black tracking-tight text-slate-950">{title}</h2>
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-lg font-black tracking-tight text-slate-950">{title}</h2>
+            <button
+              aria-label="Hide confirmation"
+              className="rounded-lg px-2 py-1 text-xs font-black text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              disabled={busy}
+              onClick={onCancel}
+              type="button"
+            >
+              Hide
+            </button>
+          </div>
           <div className="mt-2 text-sm font-medium leading-6 text-slate-600">
             {children}
           </div>
           <div className="mt-6 flex justify-end gap-2">
             <Button disabled={busy} onClick={onCancel} variant="secondary">
-              Cancel
+              Hide
             </Button>
             <Button disabled={busy} onClick={onConfirm} variant="danger">
               {busy ? (busyLabel ?? actionLabel) : actionLabel}

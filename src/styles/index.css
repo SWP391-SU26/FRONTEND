@@ -743,6 +743,31 @@ a {
   box-shadow: 0 0 0 4px hsl(176 77% 92%);
 }
 
+.control {
+  min-height: 2.75rem;
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.65rem 0.8rem;
+  color: rgb(15 23 42);
+  font-size: 0.875rem;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.control:focus {
+  border-color: rgb(45 212 191);
+  box-shadow: 0 0 0 4px rgb(204 251 241 / 0.75);
+}
+
+.control:disabled {
+  cursor: not-allowed;
+  background: rgb(241 245 249 / 0.8);
+  color: rgb(100 116 139);
+}
+
 /* Library redesign */
 .library-page .library-display-number {
   letter-spacing: 0;
@@ -810,5 +835,195 @@ a {
 @media (max-width: 640px) {
   .app-header-shell {
     grid-template-columns: auto 1fr auto;
+  }
+}
+
+/* Research report */
+.research-report {
+  max-width: 1280px;
+  margin-inline: auto;
+}
+
+.benchmark-table th,
+.benchmark-table td {
+  padding: 1rem 1.1rem;
+  border-bottom: 1px solid rgb(226 232 240);
+  vertical-align: top;
+}
+
+.benchmark-table thead th {
+  background: rgb(248 250 252 / 0.95);
+  color: rgb(71 85 105);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.benchmark-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.benchmark-table .metric-number {
+  min-width: 9.5rem;
+  color: rgb(15 23 42);
+  font-size: 1rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.research-visual-dashboard {
+  border-top: 1px solid rgb(203 213 225 / 0.7);
+  padding-top: 1.5rem;
+}
+
+.research-chart {
+  box-shadow:
+    0 16px 34px rgb(15 118 110 / 0.055),
+    inset 0 1px 0 rgb(255 255 255 / 0.9);
+}
+
+.research-chart .recharts-text,
+.research-chart .recharts-legend-item-text,
+.research-chart .recharts-label-list text {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.research-chart .research-outcome-label-light text {
+  fill: white;
+}
+
+.research-chart .research-outcome-label-dark text {
+  fill: rgb(15 23 42);
+}
+
+.research-chart .recharts-label-list text {
+  fill: rgb(51 65 85);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.research-chart .recharts-default-legend {
+  font-size: 0.75rem;
+}
+
+.research-chart .recharts-surface:focus,
+.research-chart .recharts-wrapper:focus {
+  outline: 2px solid rgb(20 184 166);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .research-chart *,
+  .research-chart *::before,
+  .research-chart *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+
+  body {
+    background: white !important;
+    color: #0f172a !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .app-ambient > .ambient-lines,
+  .app-ambient > .noise-layer,
+  .app-ambient > .motion-field,
+  .app-ambient aside,
+  .app-ambient > div > div > header,
+  .report-screen-only,
+  .report-controls,
+  .report-actions,
+  .report-question-controls {
+    display: none !important;
+  }
+
+  .app-ambient > div,
+  .app-ambient > div > div,
+  .app-ambient main,
+  .research-report {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .research-report > *,
+  .question-row,
+  .question-detail,
+  .report-methodology {
+    break-inside: avoid;
+  }
+
+  .research-report > header {
+    min-height: 235mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    break-after: page;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .benchmark-table {
+    min-width: 0 !important;
+    font-size: 9pt;
+  }
+
+  .benchmark-table thead {
+    display: table-header-group;
+  }
+
+  .benchmark-table th,
+  .benchmark-table td {
+    padding: 7pt;
+  }
+
+  .question-row button {
+    padding: 9pt !important;
+  }
+
+  .question-row .question-detail {
+    display: none !important;
+  }
+
+  .research-visual-dashboard {
+    break-before: page;
+  }
+
+  .research-chart {
+    break-inside: avoid;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  .research-chart-frame {
+    height: 68mm !important;
+  }
+
+  .research-chart-frame.h-24 {
+    height: 28mm !important;
+  }
+
+  .research-chart .recharts-wrapper,
+  .research-chart .recharts-surface {
+    overflow: visible !important;
+  }
+
+  .chart-tooltip {
+    display: none !important;
   }
 }
