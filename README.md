@@ -1,4 +1,4 @@
-# SWP Frontend
+# FStu Frontend
 
 Base frontend project using React, Vite, and Tailwind CSS.
 
