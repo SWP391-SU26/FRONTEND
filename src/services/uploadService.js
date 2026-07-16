@@ -1,4 +1,4 @@
-import { uploadDocument, waitForIndexingJob } from './documentService.js'
+import { deleteDocument, uploadDocument, waitForIndexingJob } from './documentService.js'
 
 let uploads = []
 const listeners = new Set()
@@ -21,6 +21,19 @@ export function uploadFiles(files, metadata) {
 
 export function uploadFile(file, metadata) {
   return startUpload(file, metadata).promise
+}
+
+export function deleteFile(document) {
+  const id = `delete-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`
+  const task = { id, action: 'DELETE', name: document.displayName ?? document.name ?? document.originalFilename ?? 'Document', status: 'Deleting', stage: 'Deleting', progress: 10, preview: 'Removing document, chunks, and stored file…', isUploading: true, createdAt: Date.now() }
+  uploads = [task, ...uploads]
+  notify()
+  return deleteDocument(document.id ?? document.documentId).then(() => {
+    updateUpload(id, { status: 'Deleted', stage: 'Completed', progress: 100, preview: 'Document deleted.', isUploading: false, completedAt: Date.now() })
+  }).catch((error) => {
+    updateUpload(id, { status: 'Failed', stage: 'Failed', progress: 100, preview: error.message, errorMessage: error.message, isUploading: false, completedAt: Date.now() })
+    throw error
+  })
 }
 
 export function removeUpload(id) {

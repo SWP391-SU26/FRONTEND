@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
-import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated } from '../services/authService.js'
+import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated, isResearcherSession } from '../services/authService.js'
 
 const adminNav = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
@@ -28,6 +28,10 @@ function AdminLayout() {
   const navigate = useNavigate()
   const user = getSavedUser()
   const initials = getInitials(user?.name)
+  const researcherOnly = isResearcherSession() && !isAdminSession()
+  const visibleNav = researcherOnly
+    ? adminNav.filter((item) => ['/admin/test-set', '/admin/research-dashboard'].includes(item.href))
+    : adminNav
 
   function handleLogout() {
     logout().catch(() => {})
@@ -35,7 +39,7 @@ function AdminLayout() {
     navigate('/login')
   }
 
-  if (!isAdminSession()) {
+  if (!isAdminSession() && !isResearcherSession()) {
     return <Navigate replace to={isAuthenticated() ? '/workspace' : '/login'} />
   }
 
@@ -67,7 +71,7 @@ function AdminLayout() {
           </div>
 
           <nav className="relative flex gap-2 overflow-x-auto p-3 lg:block lg:space-y-1 lg:overflow-visible">
-            {adminNav.map((item) => {
+            {visibleNav.map((item) => {
               const Icon = item.icon
 
               return (

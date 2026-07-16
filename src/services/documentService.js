@@ -7,6 +7,15 @@ export async function getDocuments() {
   return enrichDocumentChunkCounts(documents)
 }
 
+export async function getMyDocuments() {
+  const documents = unwrapList(await request('/documents/mine')).map(toUiDocument)
+  return enrichDocumentChunkCounts(documents)
+}
+
+export async function getReviewQueue() {
+  return unwrapList(await request('/documents/review-queue')).map(toUiDocument)
+}
+
 export async function getDocumentsByWorkspace(workspaceId) {
   const documents = unwrapList(
     await request(`/documents/workspace/${workspaceId}${withRequesterQuery()}`),
@@ -47,11 +56,9 @@ export function getDocumentPreviewUrl(document) {
 export async function uploadDocument({ file, workspaceId, courseId, chapterId, onUploadProgress }) {
   const formData = new FormData()
   formData.append('file', file)
-  formData.append('workspaceId', workspaceId)
+  if (workspaceId) formData.append('workspaceId', workspaceId)
   if (courseId) formData.append('courseId', courseId)
   if (chapterId) formData.append('chapterId', chapterId)
-  const userId = getCurrentUserId()
-  if (userId) formData.append('uploadedBy', userId)
 
   const result = onUploadProgress
     ? await uploadFormData('/documents/upload', formData, onUploadProgress)
@@ -64,6 +71,33 @@ export async function uploadDocument({ file, workspaceId, courseId, chapterId, o
     document: await enrichDocumentChunkCount(toUiDocument(document)),
     job: result?.indexingJob ? toUiIndexingJob(result.indexingJob) : null,
   }
+}
+
+export async function uploadPersonalDocument({ file, onUploadProgress }) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const result = onUploadProgress
+    ? await uploadFormData('/documents/personal', formData, onUploadProgress)
+    : await request('/documents/personal', { method: 'POST', body: formData })
+  return enrichDocumentChunkCount(toUiDocument(result?.document ?? result))
+}
+
+export async function submitDocument(documentId, courseId) {
+  return toUiDocument(await request(`/documents/${documentId}/submission`, {
+    method: 'POST',
+    body: JSON.stringify({ courseId }),
+  }))
+}
+
+export async function cancelDocumentSubmission(documentId) {
+  return toUiDocument(await request(`/documents/${documentId}/submission`, { method: 'DELETE' }))
+}
+
+export async function reviewDocument(documentId, status, { courseId = null, rejectionReason = '' } = {}) {
+  return toUiDocument(await request(`/documents/${documentId}/review`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, courseId, rejectionReason }),
+  }))
 }
 
 export async function reindexDocument(documentId, embeddingModelId, workspaceId = null) {
@@ -145,6 +179,14 @@ export function toUiDocument(document) {
     uploaderName: document.uploaderName ?? '',
     canEdit: canManage,
     canDelete: canManage,
+    documentScope: document.documentScope ?? (document.courseId ? 'COURSE' : 'PERSONAL'),
+    reviewStatus: document.reviewStatus ?? (document.courseId ? 'APPROVED' : 'NOT_SUBMITTED'),
+    targetCourseId: document.targetCourseId ?? null,
+    submittedAt: document.submittedAt ?? null,
+    reviewedBy: document.reviewedBy ?? null,
+    reviewedAt: document.reviewedAt ?? null,
+    rejectionReason: document.rejectionReason ?? '',
+    fileSizeBytes: Number(document.fileSizeBytes ?? 0),
     indexingJobId: document.indexingJobId ?? null,
     fileUrl: document.fileUrl ?? document.cloudinarySecureUrl ?? null,
     previewUrl: document.previewUrl ?? document.cloudinaryPreviewUrl ?? null,
@@ -302,7 +344,8 @@ function toUiStatus(status) {
   const normalized = String(status ?? 'UPLOADED').toUpperCase()
   if (normalized === 'INDEXED') return 'Indexed'
   if (normalized === 'FAILED') return 'Failed'
-  if (['UPLOADED', 'NO_TEXT'].includes(normalized)) return 'Uploaded'
+  if (normalized === 'NO_TEXT') return 'No text'
+  if (normalized === 'UPLOADED') return 'Uploaded'
   if (['EXTRACTING', 'CHUNKING', 'EMBEDDING', 'PROCESSING'].includes(normalized)) return 'Processing'
   return normalized.charAt(0) + normalized.slice(1).toLowerCase()
 }

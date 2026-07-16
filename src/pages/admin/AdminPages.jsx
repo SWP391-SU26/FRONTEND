@@ -14,6 +14,9 @@ import {
   RefreshCcw,
   Search,
   Trash2,
+  Check,
+  Eye,
+  X,
   Users,
 } from 'lucide-react'
 import {
@@ -28,8 +31,12 @@ import {
 } from '../../components/ui.jsx'
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
 import { deleteUser, getSavedUser, getUsers, updateUserRole } from '../../services/authService.js'
-import { getCourses } from '../../services/courseService.js'
-import { deleteDocument, getDocuments, reindexDocument, waitForIndexingJob } from '../../services/documentService.js'
+import { getCourses, getSemesterWorkspaces } from '../../services/courseService.js'
+import {
+  getDocumentPreviewUrl, getDocuments, getReviewQueue, reindexDocument,
+  reviewDocument, waitForIndexingJob,
+} from '../../services/documentService.js'
+import { deleteFile } from '../../services/uploadService.js'
 import {
   getExperimentResults,
   getExperiments,
@@ -210,21 +217,36 @@ export function AdminUsersPage() {
 
 export function AdminDocumentsPage() {
   const [docs, setDocs] = useState([])
+  const [courses, setCourses] = useState([])
+  const [semesters, setSemesters] = useState([])
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState(allOption)
+  const [semesterId, setSemesterId] = useState(allOption)
+  const [courseId, setCourseId] = useState(allOption)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deletingId, setDeletingId] = useState('')
   const [reindexingId, setReindexingId] = useState('')
+  const [reviewQueue, setReviewQueue] = useState([])
+  const [reviewCourses, setReviewCourses] = useState({})
+  const [reviewingId, setReviewingId] = useState('')
+  const [rejectTarget, setRejectTarget] = useState(null)
+  const [rejectionReason, setRejectionReason] = useState('')
 
   useEffect(() => {
     let active = true
     async function loadDocs() {
       try {
-        const items = await getDocuments()
+        const [items, courseItems, semesterItems, pendingItems] = await Promise.all([
+          getDocuments(), getCourses(), getSemesterWorkspaces(), getReviewQueue(),
+        ])
         if (!active) return
-        if (active) setDocs(items)
+        setDocs(items)
+        setCourses(courseItems)
+        setSemesters(semesterItems)
+        setReviewQueue(pendingItems)
+        setReviewCourses(Object.fromEntries(pendingItems.map((item) => [item.id, item.targetCourseId ?? ''])))
       } catch (requestError) {
         if (active) setError(requestError.message)
       } finally {
@@ -237,11 +259,20 @@ export function AdminDocumentsPage() {
     }
   }, [])
 
+  const courseById = useMemo(() => new Map(courses.map((course) => [course.id, course])), [courses])
+  const semesterById = useMemo(() => new Map(semesters.map((semester) => [semester.id, semester])), [semesters])
+  const visibleCourses = semesterId === allOption
+    ? courses
+    : courses.filter((course) => course.semesterWorkspaceId === semesterId)
+
   const filtered = docs.filter((doc) => {
     const q = query.toLowerCase().trim()
+    const course = courseById.get(doc.courseId)
     return (
-      (!q || doc.displayName.toLowerCase().includes(q)) &&
-      (status === allOption || doc.status === status)
+      (!q || doc.displayName.toLowerCase().includes(q) || course?.name?.toLowerCase().includes(q)) &&
+      (status === allOption || doc.status === status) &&
+      (semesterId === allOption || course?.semesterWorkspaceId === semesterId) &&
+      (courseId === allOption || doc.courseId === courseId)
     )
   })
 
@@ -283,7 +314,7 @@ export function AdminDocumentsPage() {
     setDeletingId(deleteTarget.id)
     setError('')
     try {
-      await deleteDocument(deleteTarget.id)
+      await deleteFile(deleteTarget)
       setDocs((current) => current.filter((doc) => doc.id !== deleteTarget.id))
       setDeleteTarget(null)
     } catch (requestError) {
@@ -293,21 +324,92 @@ export function AdminDocumentsPage() {
     }
   }
 
+  async function approveReview(document) {
+    const selectedCourseId = reviewCourses[document.id]
+    if (!selectedCourseId) {
+      setError('Select a destination course before approval.')
+      return
+    }
+    setReviewingId(document.id)
+    setError('')
+    try {
+      const updated = await reviewDocument(document.id, 'APPROVED', { courseId: selectedCourseId })
+      setReviewQueue((current) => current.filter((item) => item.id !== document.id))
+      setDocs((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setReviewingId('')
+    }
+  }
+
+  async function rejectReview() {
+    if (!rejectTarget || !rejectionReason.trim()) return
+    setReviewingId(rejectTarget.id)
+    setError('')
+    try {
+      const updated = await reviewDocument(rejectTarget.id, 'REJECTED', { rejectionReason: rejectionReason.trim() })
+      setReviewQueue((current) => current.filter((item) => item.id !== rejectTarget.id))
+      setDocs((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
+      setRejectTarget(null)
+      setRejectionReason('')
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setReviewingId('')
+    }
+  }
+
   return (
     <CrudPage description="Manage documents returned by the backend document API." icon={FileText} title="Document Management">
       {error ? <Alert message={error} /> : null}
+      <Panel className="p-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div><h2 className="text-base font-black text-slate-950">Review queue</h2><p className="mt-1 text-xs font-semibold text-slate-500">{reviewQueue.length} pending document{reviewQueue.length === 1 ? '' : 's'}</p></div>
+          <StatusBadge status={reviewQueue.length ? 'Pending' : 'Processed'} />
+        </div>
+        {reviewQueue.length ? <div className="divide-y divide-slate-100">
+          {reviewQueue.map((document) => <div key={document.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,320px)_auto] lg:items-center">
+            <div className="min-w-0">
+              <p className="break-all text-sm font-black text-slate-900">{document.displayName}</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">{document.type} · {document.pages || 0} pages</p>
+            </div>
+            <SelectField label="Destination course" value={reviewCourses[document.id] ?? ''} onChange={(event) => setReviewCourses((current) => ({ ...current, [document.id]: event.target.value }))}>
+              <option value="">Select course</option>
+              {courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
+            </SelectField>
+            <RowActions>
+              <IconButton label="Preview" onClick={() => { const url = getDocumentPreviewUrl(document); if (url) window.open(url, '_blank', 'noopener,noreferrer') }}><Eye size={15} /></IconButton>
+              <Button size="sm" disabled={reviewingId === document.id} onClick={() => approveReview(document)}><Check size={15} />Approve</Button>
+              <Button size="sm" variant="danger" disabled={reviewingId === document.id} onClick={() => { setRejectTarget(document); setRejectionReason('') }}><X size={15} />Reject</Button>
+            </RowActions>
+          </div>)}
+        </div> : <div className="px-5 py-8 text-center text-sm font-semibold text-slate-500">No documents waiting for review.</div>}
+      </Panel>
       <Toolbar>
         <Field icon={Search} label="Search document" onChange={(event) => setQuery(event.target.value)} placeholder="Filename..." value={query} />
         <SelectField label="Status" onChange={(event) => setStatus(event.target.value)} value={status}>
           {[allOption, 'Uploaded', 'Processing', 'Processed', 'Indexed', 'Failed'].map((item) => <option key={item}>{item}</option>)}
         </SelectField>
+        <SelectField label="Semester" onChange={(event) => { setSemesterId(event.target.value); setCourseId(allOption) }} value={semesterId}>
+          <option value={allOption}>All semesters</option>
+          {semesters.map((semester) => <option key={semester.id} value={semester.id}>{semester.name}</option>)}
+        </SelectField>
+        <SelectField label="Course" onChange={(event) => setCourseId(event.target.value)} value={courseId}>
+          <option value={allOption}>All courses</option>
+          {visibleCourses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
+        </SelectField>
       </Toolbar>
       {loading ? <Loading label="Loading documents" /> : filtered.length ? (
         <DataTable
-          columns={['Document', 'Workspace', 'Status', 'Embeddings', 'Chunks', 'Pages', 'Actions']}
-          rows={filtered.map((doc) => [
+          columns={['Document', 'Semester / Course', 'Workspace', 'Status', 'Embeddings', 'Chunks', 'Pages', 'Actions']}
+          rows={filtered.map((doc) => {
+            const course = courseById.get(doc.courseId)
+            const semester = semesterById.get(course?.semesterWorkspaceId)
+            return [
             <Identity key="doc" subtitle={doc.type || 'File'} title={doc.displayName} />,
-            doc.subject,
+            <Identity key="scope" subtitle={course ? `${course.code} · ${course.name}` : 'Course not assigned'} title={semester?.name || 'Semester not assigned'} />,
+            doc.subject || 'Course Knowledge Base',
             <StatusBadge key="status" status={doc.status} />,
             <StatusBadge key="embeddings" status={doc.embeddingStatus} />,
             doc.chunks,
@@ -318,7 +420,7 @@ export function AdminDocumentsPage() {
                 <IconButton disabled={deletingId === doc.id} label="Delete" onClick={() => setDeleteTarget(doc)}><Trash2 size={15} /></IconButton>
               ) : null}
             </RowActions>,
-          ])}
+          ]})}
         />
       ) : <EmptyState title="No documents" description="The backend returned no documents for the current requester." />}
       {deleteTarget ? (
@@ -335,6 +437,14 @@ export function AdminDocumentsPage() {
           "{deleteTarget.displayName}" will be removed from the backend.
         </ConfirmModal>
       ) : null}
+      {rejectTarget ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && setRejectTarget(null)}>
+        <section className="os-panel w-full max-w-md p-5">
+          <h2 className="text-lg font-black text-slate-950">Reject document</h2>
+          <p className="mt-2 truncate text-sm font-semibold text-slate-500">{rejectTarget.displayName}</p>
+          <textarea className="mt-4 min-h-28 w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm font-semibold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100" placeholder="Rejection reason" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} />
+          <div className="mt-4 flex justify-end gap-2"><Button variant="secondary" onClick={() => setRejectTarget(null)}>Cancel</Button><Button variant="danger" disabled={!rejectionReason.trim() || reviewingId === rejectTarget.id} onClick={rejectReview}>Reject</Button></div>
+        </section>
+      </div> : null}
     </CrudPage>
   )
 }

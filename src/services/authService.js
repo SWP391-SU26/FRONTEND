@@ -58,7 +58,7 @@ export function updateUserRole(userId, roleName) {
 }
 
 export function deleteUser(userId) {
-  return request(`/auth/users/${userId}${withRequesterQuery()}`, {
+  return request(`/auth/users/${userId}`, {
     method: 'DELETE',
   })
 }
@@ -101,13 +101,19 @@ export function isAdminSession() {
   return hasRole(getSavedUser(), 'ADMIN')
 }
 
+export function isResearcherSession() {
+  return hasRole(getSavedUser(), 'RESEARCHER')
+}
+
 export function hasRole(user, roleName) {
   const expected = roleName?.toUpperCase()
   return Boolean(user?.roles?.some((role) => role?.toUpperCase() === expected))
 }
 
 export function getDefaultRouteForUser(user) {
-  return hasRole(user, 'ADMIN') ? '/admin/dashboard' : '/workspace'
+  if (hasRole(user, 'ADMIN')) return '/admin/dashboard'
+  if (hasRole(user, 'RESEARCHER')) return '/admin/test-set'
+  return '/workspace'
 }
 
 function toSession(auth) {
@@ -130,11 +136,6 @@ function toSession(auth) {
 
 export function getCurrentUserId() {
   return getSavedUser()?.id ?? null
-}
-
-function withRequesterQuery() {
-  const userId = getCurrentUserId()
-  return userId ? `?requesterId=${encodeURIComponent(userId)}` : ''
 }
 
 function isJwtExpired(token) {
