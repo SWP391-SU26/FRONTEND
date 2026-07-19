@@ -31,10 +31,10 @@ export async function deleteSession(sessionId) {
   return request(`/chat/sessions/${sessionId}`, { method: 'DELETE' })
 }
 
-export async function askQuestion(sessionId, question) {
+export async function askQuestion(sessionId, question, { mode = 'rag' } = {}) {
   const response = await request(`/chat/sessions/${sessionId}/ask`, {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, mode, answerMode: mode }),
   })
   return {
     ...response,

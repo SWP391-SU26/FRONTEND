@@ -61,6 +61,7 @@ export default function WorkspacePage() {
   const [activeCitation, setActiveCitation] = useState(null)
   const [noteDraft, setNoteDraft] = useState(null)
   const [input, setInput] = useState('')
+  const [chatMode, setChatMode] = useState('rag')
   const [loadingScope, setLoadingScope] = useState(true)
   const [loadingCourse, setLoadingCourse] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -279,7 +280,7 @@ export default function WorkspacePage() {
         })
         setSessions((current) => [activeSession, ...current])
       }
-      const answer = await askQuestion(activeSession.id, question)
+      const answer = await askQuestion(activeSession.id, question, { mode: chatMode })
       setMessages((current) => [
         ...current,
         {
@@ -395,10 +396,14 @@ export default function WorkspacePage() {
             </div>
           </header>
 
-          <div className="flex min-h-10 flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500">
-            {session ? <span className="inline-flex items-center gap-1 text-primary"><Check size={14} />Phạm vi đã cố định</span> : null}
-            <span className="max-w-full break-words font-bold text-slate-700">{activeScopeLabel}</span>
-            {!scopeValid ? <span className="basis-full whitespace-normal text-amber-700 sm:basis-auto">{['DOCUMENTS', 'PERSONAL'].includes(scopeType) ? 'Chọn ít nhất một tài liệu đã xử lý.' : 'Phạm vi chưa có tài liệu khả dụng.'}</span> : null}
+          <div className="grid min-h-10 grid-cols-1 items-center gap-2 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {session ? <span className="inline-flex items-center gap-1 text-primary"><Check size={14} />Phạm vi đã cố định</span> : null}
+              <span className="max-w-full break-words font-bold text-slate-700">{activeScopeLabel}</span>
+            </div>
+            <ChatModeToggle disabled={answering} onChange={setChatMode} value={chatMode} />
+            <div className="hidden sm:block" aria-hidden="true" />
+            {!scopeValid ? <span className="whitespace-normal text-amber-700 sm:col-span-3">{['DOCUMENTS', 'PERSONAL'].includes(scopeType) ? 'Chọn ít nhất một tài liệu đã xử lý.' : 'Phạm vi chưa có tài liệu khả dụng.'}</span> : null}
           </div>
 
           {error ? (
@@ -441,7 +446,8 @@ export default function WorkspacePage() {
           </section>
 
           <form className="sticky bottom-0 border-t border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-xl" onSubmit={submit}>
-            <div className="mx-auto flex max-w-[800px] items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_12px_36px_rgba(15,23,42,.08)] focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100">
+            <div className="mx-auto max-w-[800px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_12px_36px_rgba(15,23,42,.08)] focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100">
+              <div className="flex items-end gap-2">
               <textarea
                 aria-label="Câu hỏi"
                 className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
@@ -457,6 +463,7 @@ export default function WorkspacePage() {
               <Button aria-label="Gửi câu hỏi" disabled={!input.trim() || !scopeValid || answering} size="icon" type="submit">
                 {answering ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
               </Button>
+              </div>
             </div>
             <p className="mx-auto mt-1.5 max-w-[800px] px-2 text-[11px] font-medium text-slate-400">Enter để gửi · Shift + Enter để xuống dòng</p>
           </form>
@@ -710,6 +717,47 @@ function ScopeSelect({ children, label, ...props }) {
       <span className="sr-only">{label}</span>
       <select className="h-10 w-full max-w-[290px] truncate rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-800 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100" {...props}>{children}</select>
     </label>
+  )
+}
+
+function ChatModeToggle({ disabled, onChange, value }) {
+  const modes = [
+    { value: 'rag', label: 'RAG', icon: BookOpen },
+    { value: 'fine_tuning', label: 'Fine-tuning', icon: Bot },
+  ]
+  return (
+    <div className="mx-auto flex h-9 shrink-0 items-center rounded-xl bg-slate-100 p-1 shadow-inner shadow-slate-200/60" aria-label="AI model">
+      {modes.map(({ value: mode, label, icon: Icon }) => (
+        <button
+          aria-pressed={value === mode}
+          className={cn(
+            'relative isolate flex h-7 items-center gap-1.5 overflow-hidden rounded-lg px-2.5 text-xs font-black transition-colors sm:px-3',
+            value === mode ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
+            disabled && 'cursor-not-allowed opacity-70',
+          )}
+          disabled={disabled}
+          key={mode}
+          onClick={() => onChange(mode)}
+          type="button"
+        >
+          {value === mode ? (
+            <motion.span
+              className="absolute inset-0 -z-10 rounded-lg bg-white shadow-sm"
+              layoutId="chat-mode-active"
+              transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+            />
+          ) : null}
+          <motion.span
+            animate={{ scale: value === mode ? 1.08 : 1 }}
+            className="grid place-items-center"
+            transition={{ type: 'spring', stiffness: 380, damping: 24 }}
+          >
+            <Icon size={13} />
+          </motion.span>
+          <span className="relative">{label}</span>
+        </button>
+      ))}
+    </div>
   )
 }
 

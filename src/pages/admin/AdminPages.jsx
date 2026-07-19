@@ -10,15 +10,30 @@ import {
   FileText,
   FlaskConical,
   Gauge,
+  HardDrive,
   Loader2,
+  LineChart,
   RefreshCcw,
   Search,
+  ServerCog,
+  ShieldCheck,
   Trash2,
   Check,
   Eye,
   X,
   Users,
 } from 'lucide-react'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import {
   Button,
   ConfirmModal,
@@ -42,6 +57,11 @@ import {
   getExperiments,
 } from '../../services/evaluationService.js'
 import { getActiveEmbeddingModel } from '../../services/ragService.js'
+import {
+  getAdminDashboardHealth,
+  getAdminDashboardSummary,
+  getAdminDashboardTimeseries,
+} from '../../services/adminDashboardService.js'
 
 const allOption = 'All'
 const roles = ['ADMIN', 'TEACHER', 'STUDENT', 'RESEARCHER', 'USER']
@@ -51,39 +71,73 @@ function unwrapList(result) {
 }
 
 function statusForBadge(value) {
-  if (value === true || value === 'ACTIVE' || value === 'Active' || value === 'COMPLETED') return 'Indexed'
+  if (value === true || value === 'ACTIVE' || value === 'Active' || value === 'COMPLETED' || value === 'PROCESSED') return 'Indexed'
   if (value === 'RUNNING') return 'Processing'
-  if (value === 'PENDING') return 'Pending'
-  if (value === false || value === 'LOCKED' || value === 'Locked' || value === 'FAILED') return 'Failed'
+  if (value === 'PENDING' || value === 'QUEUED') return 'Pending'
+  if (value === 'NO_TEXT') return 'No text'
+  if (value === false || value === 'LOCKED' || value === 'Locked' || value === 'FAILED' || value === 'CANCELLED') return 'Failed'
   return value ?? 'Uploaded'
 }
 
 export function AdminDashboardPage() {
-  const [state, setState] = useState({ loading: true, error: '', users: [], documents: [], courses: [], experiments: [] })
+  const [state, setState] = useState({
+    loading: true,
+    error: '',
+    summary: null,
+    timeseries: null,
+    health: null,
+  })
+
+  async function loadDashboard() {
+    setState((current) => ({ ...current, loading: true, error: '' }))
+    try {
+      const [summary, timeseries, health] = await Promise.all([
+        getAdminDashboardSummary(),
+        getAdminDashboardTimeseries(14),
+        getAdminDashboardHealth(),
+      ])
+      setState({ loading: false, error: '', summary, timeseries, health })
+    } catch (requestError) {
+      setState((current) => ({ ...current, loading: false, error: requestError.message }))
+    }
+  }
 
   useEffect(() => {
     let active = true
     Promise.all([
-      getUsers().then(unwrapList),
-      getDocuments(),
-      getCourses(),
-      getExperiments().catch(() => []),
+      getAdminDashboardSummary(),
+      getAdminDashboardTimeseries(14),
+      getAdminDashboardHealth(),
     ])
-      .then(([users, documents, courses, experiments]) => {
-        if (active) setState({ loading: false, error: '', users, documents, courses, experiments })
+      .then(([summary, timeseries, health]) => {
+        if (active) setState({ loading: false, error: '', summary, timeseries, health })
       })
-      .catch((error) => active && setState((current) => ({ ...current, loading: false, error: error.message })))
+      .catch((requestError) => {
+        if (active) setState((current) => ({ ...current, loading: false, error: requestError.message }))
+      })
     return () => {
       active = false
     }
   }, [])
 
-  const prepared = state.documents.filter((doc) => doc.embeddingStatus === 'Prepared').length
+  const summary = state.summary ?? {}
+  const totals = summary.totals ?? {}
+  const documents = summary.documents ?? {}
+  const experiments = summary.experiments ?? {}
+  const activity = summary.activity ?? {}
+  const chartData = (state.timeseries?.points ?? []).map((point) => ({
+    date: formatShortDate(point.date),
+    uploads: Number(point.documentUploads ?? 0),
+    retrievals: Number(point.retrievalQueries ?? 0),
+    experiments: Number(point.experimentsCreated ?? 0),
+  }))
+  const healthItems = state.health?.items ?? []
 
   return (
     <div className="space-y-4">
       <AdminPageHeader
-        description="Overview from live backend APIs only."
+        actions={<Button disabled={state.loading} onClick={loadDashboard} type="button" variant="secondary"><RefreshCcw className={state.loading ? 'animate-spin' : ''} size={15} />Refresh</Button>}
+        description="Operational overview from admin aggregate APIs."
         icon={Gauge}
         title="Admin Dashboard"
       />
@@ -91,23 +145,247 @@ export function AdminDashboardPage() {
       {state.loading ? <Loading label="Loading dashboard data" /> : (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={Users} label="Users" value={state.users.length} />
-            <MetricCard icon={BookOpen} label="Courses" value={state.courses.length} />
-            <MetricCard icon={FileText} label="Documents" value={state.documents.length} />
-            <MetricCard icon={Database} label="Prepared documents" value={prepared} />
+            <MetricCard icon={Users} label="Users" value={formatNumber(totals.users)} />
+            <MetricCard icon={BookOpen} label="Courses" value={formatNumber(totals.courses)} />
+            <MetricCard icon={FileText} label="Documents" value={formatNumber(totals.documents)} />
+            <MetricCard icon={Database} label="Datasets" value={formatNumber(totals.datasets)} />
           </div>
-          <Panel className="p-5">
-            <SectionTitle icon={BarChart3} title="Live data source" subtitle="Dashboard statistics are derived from backend responses." />
-            <div className="mt-5 grid gap-3 md:grid-cols-3">
-              <MiniStat label="Processing" value={state.documents.filter((doc) => doc.status === 'Processing').length} />
-              <MiniStat label="Failed" value={state.documents.filter((doc) => doc.status === 'Failed').length} />
-              <MiniStat label="Experiments" value={state.experiments.length} />
-            </div>
-          </Panel>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,.65fr)]">
+            <Panel className="overflow-hidden p-5">
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-0 h-24 bg-gradient-to-r from-teal-100/55 via-white/20 to-transparent" />
+              <div className="relative z-10">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <SectionTitle icon={LineChart} title="Platform activity" subtitle="Uploads, retrievals, and experiments over the last 14 days." />
+                  <div className="grid grid-cols-3 gap-2 text-right">
+                    <MiniStat label="Retrievals" value={formatNumber(totals.retrievalQueries)} />
+                    <MiniStat label="Experiments" value={formatNumber(totals.experiments)} />
+                    <MiniStat label="Storage" value={formatBytes(documents.totalStorageBytes)} />
+                  </div>
+                </div>
+                <div className="mt-5 h-72">
+                  {chartData.length ? (
+                    <ResponsiveContainer height="100%" width="100%">
+                      <AreaChart data={chartData} margin={{ bottom: 0, left: -18, right: 10, top: 10 }}>
+                        <defs>
+                          <linearGradient id="dashboardUploads" x1="0" x2="0" y1="0" y2="1">
+                            <stop offset="5%" stopColor="hsl(176 77% 26%)" stopOpacity={0.32} />
+                            <stop offset="95%" stopColor="hsl(176 77% 26%)" stopOpacity={0.03} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#dbe7e5" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
+                        <YAxis allowDecimals={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
+                        <Tooltip content={<DashboardTooltip />} />
+                        <Area dataKey="uploads" fill="url(#dashboardUploads)" name="Uploads" stroke="hsl(176 77% 26%)" strokeWidth={2.5} type="monotone" />
+                        <Area dataKey="retrievals" fill="transparent" name="Retrievals" stroke="#0f766e" strokeDasharray="5 4" strokeWidth={2} type="monotone" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <EmptyInline title="No activity data" description="The backend returned no timeseries points yet." />
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel className="p-5">
+              <SectionTitle icon={ServerCog} title="System health" subtitle={state.health?.status === 'OK' ? 'All monitored checks are clear.' : 'Some operational checks need attention.'} />
+              <div className="mt-5 space-y-3">
+                {healthItems.map((item) => <HealthRow item={item} key={item.key} />)}
+              </div>
+            </Panel>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Panel className="p-5">
+              <SectionTitle icon={FileText} title="Document operations" subtitle="Processing and review status." />
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <MiniStat label="Processed" value={formatNumber(documents.processed)} />
+                <MiniStat label="Processing" value={formatNumber(documents.processing)} />
+                <MiniStat label="Failed" value={formatNumber(documents.failed)} />
+                <MiniStat label="Pending review" value={formatNumber(documents.pendingReview)} />
+              </div>
+            </Panel>
+            <Panel className="p-5">
+              <SectionTitle icon={FlaskConical} title="Experiment status" subtitle="Benchmark and fine-tuning records." />
+              <div className="mt-5 h-52">
+                <ResponsiveContainer height="100%" width="100%">
+                  <BarChart data={[
+                    { status: 'Pending', value: Number(experiments.pending ?? 0) },
+                    { status: 'Queued', value: Number(experiments.queued ?? 0) },
+                    { status: 'Running', value: Number(experiments.running ?? 0) },
+                    { status: 'Completed', value: Number(experiments.completed ?? 0) },
+                    { status: 'Failed', value: Number(experiments.failed ?? 0) },
+                  ]} margin={{ bottom: 0, left: -18, right: 10, top: 10 }}>
+                    <CartesianGrid stroke="#dbe7e5" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="status" tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
+                    <Tooltip content={<DashboardTooltip />} />
+                    <Bar dataKey="value" fill="hsl(176 77% 26%)" name="Experiments" radius={[7, 7, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+            <Panel className="p-5">
+              <SectionTitle icon={ShieldCheck} title="Readiness" subtitle="CourseQA resources available to admins." />
+              <div className="mt-5 grid gap-3">
+                <ReadinessLine label="Active users" value={`${formatNumber(totals.activeUsers)} / ${formatNumber(totals.users)}`} />
+                <ReadinessLine label="Active courses" value={`${formatNumber(totals.activeCourses)} / ${formatNumber(totals.courses)}`} />
+                <ReadinessLine label="Active workspaces" value={`${formatNumber(totals.activeWorkspaces)} / ${formatNumber(totals.workspaces)}`} />
+                <ReadinessLine label="Active embedding models" value={`${formatNumber(totals.activeEmbeddingModels)} / ${formatNumber(totals.embeddingModels)}`} />
+                <ReadinessLine label="Missing previews" value={formatNumber(documents.missingPreview)} />
+              </div>
+            </Panel>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <ActivityPanel
+              empty="No recent documents."
+              icon={FileText}
+              items={activity.recentDocuments ?? []}
+              renderItem={(item) => (
+                <ActivityItem
+                  meta={`${item.fileType || 'FILE'} - ${formatBytes(item.fileSizeBytes)}`}
+                  status={statusForBadge(item.processingStatus)}
+                  title={item.documentTitle || item.originalFilename || 'Untitled document'}
+                />
+              )}
+              title="Recent documents"
+            />
+            <ActivityPanel
+              empty="No recent experiments."
+              icon={FlaskConical}
+              items={activity.recentExperiments ?? []}
+              renderItem={(item) => (
+                <ActivityItem
+                  meta={`${item.experimentType || 'Evaluation'} - ${item.llmModel || 'No model'}`}
+                  status={statusForBadge(item.status)}
+                  title={item.experimentName || 'Untitled experiment'}
+                />
+              )}
+              title="Recent experiments"
+            />
+            <ActivityPanel
+              empty="No recent retrieval queries."
+              icon={HardDrive}
+              items={activity.recentRetrievalQueries ?? []}
+              renderItem={(item) => (
+                <ActivityItem
+                  meta={`${item.scopeType || 'Workspace'} - ${item.latencyMs ?? 0} ms`}
+                  status={item.isAnswerable === false ? 'Failed' : 'Processed'}
+                  title={item.queryText || 'Empty query'}
+                />
+              )}
+              title="Recent retrievals"
+            />
+          </div>
         </>
       )}
     </div>
   )
+}
+
+function DashboardTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-[0_16px_36px_rgba(15,23,42,.12)] backdrop-blur-xl">
+      <p className="mb-2 font-semibold text-slate-900">{label}</p>
+      <div className="space-y-1">
+        {payload.map((entry) => (
+          <p className="flex items-center justify-between gap-5 font-medium text-slate-600" key={entry.dataKey}>
+            <span>{entry.name}</span>
+            <span className="font-black text-slate-950">{formatNumber(entry.value)}</span>
+          </p>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function HealthRow({ item }) {
+  const status = item.status === 'OK' ? 'Processed' : item.status === 'INFO' ? 'Pending' : 'Failed'
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/72 p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{item.message}</p>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950">{formatNumber(item.count)}</p>
+    </div>
+  )
+}
+
+function ReadinessLine({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white/72 px-3 py-2.5 shadow-[0_10px_24px_rgba(15,118,110,.05)]">
+      <span className="text-sm font-semibold text-slate-600">{label}</span>
+      <span className="text-sm font-black text-slate-950">{value}</span>
+    </div>
+  )
+}
+
+function ActivityPanel({ empty, icon, items, renderItem, title }) {
+  return (
+    <Panel className="p-5">
+      <SectionTitle icon={icon} title={title} subtitle={`${items.length} latest backend records.`} />
+      <div className="mt-5 space-y-3">
+        {items.length ? items.map((item) => (
+          <div key={item.documentId ?? item.experimentId ?? item.retrievalQueryId}>
+            {renderItem(item)}
+          </div>
+        )) : <EmptyInline title={empty} description="New records will appear here after backend activity." />}
+      </div>
+    </Panel>
+  )
+}
+
+function ActivityItem({ meta, status, title }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/72 p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-900">{title}</p>
+          <p className="mt-1 truncate text-xs font-medium text-slate-500">{meta}</p>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+    </div>
+  )
+}
+
+function EmptyInline({ description, title }) {
+  return (
+    <div className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-200 bg-white/52 p-4 text-center">
+      <div>
+        <p className="text-sm font-semibold text-slate-700">{title}</p>
+        <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+function formatNumber(value) {
+  const number = Number(value ?? 0)
+  return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '0'
+}
+
+function formatBytes(value) {
+  const bytes = Number(value ?? 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+function formatShortDate(value) {
+  if (!value) return ''
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 export function AdminUsersPage() {
