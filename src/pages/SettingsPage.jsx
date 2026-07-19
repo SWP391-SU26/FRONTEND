@@ -10,7 +10,7 @@ import {
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Button from '../components/common/Button.jsx'
-import { getSavedUser, clearSession, logout } from '../services/authService.js'
+import { changePassword, getSavedUser, clearSession, logout } from '../services/authService.js'
 
 const tabs = [
   { id: 'profile', label: 'Profile' },
@@ -38,11 +38,17 @@ function SettingsPage() {
     saveHistory: true,
   })
   const [savedMessage, setSavedMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [accountPassword, setAccountPassword] = useState({
+    currentPassword: '',
+    newPassword: '',
+  })
 
   function handleProfileChange(event) {
     const { name, value } = event.target
     setProfile((currentProfile) => ({ ...currentProfile, [name]: value }))
     setSavedMessage('')
+    setErrorMessage('')
   }
 
   function handleChatSettingChange(event) {
@@ -52,11 +58,34 @@ function SettingsPage() {
       [name]: type === 'checkbox' ? checked : value,
     }))
     setSavedMessage('')
+    setErrorMessage('')
   }
 
   function handleSave(event) {
     event.preventDefault()
     setSavedMessage('Changes saved successfully.')
+    setErrorMessage('')
+  }
+
+  function handleAccountPasswordChange(event) {
+    const { name, value } = event.target
+    setAccountPassword((currentPassword) => ({ ...currentPassword, [name]: value }))
+    setSavedMessage('')
+    setErrorMessage('')
+  }
+
+  async function handleAccountSave(event) {
+    event.preventDefault()
+    setSavedMessage('')
+    setErrorMessage('')
+
+    try {
+      await changePassword(accountPassword)
+      setAccountPassword({ currentPassword: '', newPassword: '' })
+      setSavedMessage('Password changed successfully.')
+    } catch (error) {
+      setErrorMessage(error.message || 'Could not change password.')
+    }
   }
 
   function handleLogout() {
@@ -128,6 +157,11 @@ function SettingsPage() {
                 {savedMessage}
               </div>
             ) : null}
+            {errorMessage ? (
+              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                {errorMessage}
+              </div>
+            ) : null}
 
             {activeTab === 'profile' ? (
               <ProfileTab
@@ -138,7 +172,12 @@ function SettingsPage() {
             ) : null}
 
             {activeTab === 'account' ? (
-              <AccountTab onLogout={handleLogout} onSave={handleSave} />
+              <AccountTab
+                onChange={handleAccountPasswordChange}
+                onLogout={handleLogout}
+                onSave={handleAccountSave}
+                password={accountPassword}
+              />
             ) : null}
 
             {activeTab === 'chat' ? (
@@ -171,7 +210,7 @@ function SectionHeader({ description, eyebrow, title }) {
   )
 }
 
-function Field({ label, name, onChange, placeholder, readOnly, value }) {
+function Field({ label, name, onChange, placeholder, readOnly, type = 'text', value }) {
   return (
     <label className="block">
       <span className="text-sm font-bold text-foreground">{label}</span>
@@ -186,6 +225,7 @@ function Field({ label, name, onChange, placeholder, readOnly, value }) {
         onChange={onChange}
         placeholder={placeholder}
         readOnly={readOnly}
+        type={type}
         value={value}
       />
     </label>
@@ -255,7 +295,7 @@ function ProfileTab({ onChange, onSave, profile }) {
   )
 }
 
-function AccountTab({ onLogout, onSave }) {
+function AccountTab({ onChange, onLogout, onSave, password }) {
   return (
     <form onSubmit={onSave}>
       <SectionHeader
@@ -265,8 +305,22 @@ function AccountTab({ onLogout, onSave }) {
       />
 
       <div className="mt-6 grid grid-cols-2 gap-5">
-        <Field label="Current password" placeholder="Enter current password" />
-        <Field label="New password" placeholder="Enter new password" />
+        <Field
+          label="Current password"
+          name="currentPassword"
+          onChange={onChange}
+          placeholder="Enter current password"
+          type="password"
+          value={password.currentPassword}
+        />
+        <Field
+          label="New password"
+          name="newPassword"
+          onChange={onChange}
+          placeholder="Enter new password"
+          type="password"
+          value={password.newPassword}
+        />
       </div>
 
       <div className="mt-6 rounded-[1.5rem] border border-border bg-secondary p-5">

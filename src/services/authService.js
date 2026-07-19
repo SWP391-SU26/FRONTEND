@@ -29,6 +29,13 @@ export function forgotPassword(email) {
   })
 }
 
+export function changePassword({ currentPassword, newPassword }) {
+  return request('/auth/change-password', {
+    method: 'PUT',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
+}
+
 export async function logout() {
   const userId = getCurrentUserId()
   if (userId) {
