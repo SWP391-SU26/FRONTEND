@@ -1,5 +1,6 @@
 /* eslint-disable react-hooks/set-state-in-effect -- request-bound resets prevent stale course/session data */
 import { AnimatePresence, motion } from 'framer-motion'
+import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import {
   AlertCircle,
   BookOpen,
@@ -18,6 +19,7 @@ import {
   MessageSquare,
   NotebookPen,
   PanelRight,
+  Pin,
   Plus,
   Save,
   Send,
@@ -28,12 +30,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, IconButton, StatusBadge } from '../components/ui.jsx'
 import {
-  askQuestion,
+  askQuestionStream,
   createSession,
   deleteSession,
   getMessages,
   getNotes,
   getSessions,
+  pinSession,
   saveNote,
 } from '../services/chatService.js'
 import { getCourseMaterials, getLearningScope } from '../services/courseService.js'
@@ -61,18 +64,29 @@ export default function WorkspacePage() {
   const [activeCitation, setActiveCitation] = useState(null)
   const [noteDraft, setNoteDraft] = useState(null)
   const [input, setInput] = useState('')
-  const [chatMode, setChatMode] = useState('rag')
   const [loadingScope, setLoadingScope] = useState(true)
   const [loadingCourse, setLoadingCourse] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [answering, setAnswering] = useState(false)
+  const [processingSteps, setProcessingSteps] = useState([])
   const [savingNote, setSavingNote] = useState(false)
   const [deletingId, setDeletingId] = useState('')
+  const [pinningId, setPinningId] = useState('')
   const [copiedId, setCopiedId] = useState('')
   const [error, setError] = useState('')
   const messagesEndRef = useRef(null)
   const courseRequestRef = useRef(0)
   const messageRequestRef = useRef(0)
+  const assistantRuntime = useExternalStoreRuntime({
+    messages,
+    isRunning: answering,
+    onNew: async () => undefined,
+    convertMessage: (message) => ({
+      id: String(message.id),
+      role: message.role,
+      content: [{ type: 'text', text: message.content || '' }],
+    }),
+  })
 
   const semester = useMemo(
     () => semesters.find((item) => String(item.semesterId) === String(semesterId)) ?? null,
@@ -183,6 +197,14 @@ export default function WorkspacePage() {
   }, [session?.id])
 
   useEffect(() => {
+    if (!session?.id) return
+    setScopeType(session.scopeType ?? 'COURSE')
+    setSelectedDocumentIds(session.documentIds ?? [])
+    if (session.semesterId) setSemesterId(session.semesterId)
+    if (session.courseId) setCourseId(session.courseId)
+  }, [session?.id, session?.scopeType, session?.semesterId, session?.courseId, session?.documentIds])
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, answering])
 
@@ -231,6 +253,7 @@ export default function WorkspacePage() {
     setDrawerMode(null)
     setScopeType(nextSession.scopeType ?? 'COURSE')
     setSelectedDocumentIds(nextSession.documentIds ?? [])
+    if (nextSession.semesterId) setSemesterId(nextSession.semesterId)
     if (nextSession.courseId) setCourseId(nextSession.courseId)
     setSession(nextSession)
   }
@@ -258,6 +281,22 @@ export default function WorkspacePage() {
     }
   }
 
+  async function togglePin(event, item) {
+    event.stopPropagation()
+    if (pinningId) return
+    setPinningId(item.id)
+    setError('')
+    try {
+      const updated = await pinSession(item.id, !item.isPinned)
+      setSessions((current) => sortSessions(current.map((candidate) => candidate.id === item.id ? updated : candidate)))
+      setSession((current) => current?.id === item.id ? { ...current, ...updated } : current)
+    } catch (requestError) {
+      setError(readError(requestError, 'Không thể thay đổi trạng thái ghim.'))
+    } finally {
+      setPinningId('')
+    }
+  }
+
   async function submit(event) {
     event?.preventDefault()
     const question = input.trim()
@@ -266,11 +305,12 @@ export default function WorkspacePage() {
     setInput('')
     setError('')
     setAnswering(true)
+    setProcessingSteps([])
     const optimisticUser = { id: `pending-${Date.now()}`, role: 'user', content: question, citations: [] }
     setMessages((current) => [...current, optimisticUser])
+    let activeSession = session
 
     try {
-      let activeSession = session
       if (!activeSession) {
         activeSession = await createSession({
           scopeType,
@@ -280,7 +320,9 @@ export default function WorkspacePage() {
         })
         setSessions((current) => [activeSession, ...current])
       }
-      const answer = await askQuestion(activeSession.id, question, { mode: chatMode })
+      const answer = await askQuestionStream(activeSession.id, question, {
+        onStage: (streamEvent) => setProcessingSteps((current) => upsertProcessingStep(current, streamEvent)),
+      })
       setMessages((current) => [
         ...current,
         {
@@ -296,7 +338,7 @@ export default function WorkspacePage() {
       const refreshedActive = refreshed.find((item) => item.id === activeSession.id)
       setSession(refreshedActive ?? activeSession)
     } catch (requestError) {
-      setMessages((current) => current.filter((message) => message.id !== optimisticUser.id))
+      if (activeSession) setSession(activeSession)
       setInput(question)
       setError(readError(requestError, 'AI chưa phản hồi. Bạn có thể thử gửi lại.'))
     } finally {
@@ -345,11 +387,13 @@ export default function WorkspacePage() {
   }
 
   return (
+    <AssistantRuntimeProvider runtime={assistantRuntime}>
     <div className="workspace-fixed-page relative min-h-0 px-3 pb-3 sm:px-5">
       <div className="grid h-full min-h-0 overflow-hidden rounded-[24px] border border-white/80 bg-white/70 shadow-[0_24px_70px_rgba(15,118,110,.12)] backdrop-blur-2xl lg:grid-cols-[288px_minmax(0,1fr)]">
         <Sidebar
           activeSessionId={session?.id}
           deletingId={deletingId}
+          pinningId={pinningId}
           materials={materials}
           personalDocuments={personalDocuments}
           courses={courses}
@@ -358,6 +402,7 @@ export default function WorkspacePage() {
           navigate={navigate}
           onClose={() => setSidebarOpen(false)}
           onDelete={removeSession}
+          onPin={togglePin}
           onSelectSession={selectSession}
           onToggleDocument={toggleDocument}
           open={sidebarOpen}
@@ -396,13 +441,12 @@ export default function WorkspacePage() {
             </div>
           </header>
 
-          <div className="grid min-h-10 grid-cols-1 items-center gap-2 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="grid min-h-10 grid-cols-1 items-center gap-2 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 sm:grid-cols-[minmax(0,1fr)_auto]">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               {session ? <span className="inline-flex items-center gap-1 text-primary"><Check size={14} />Phạm vi đã cố định</span> : null}
               <span className="max-w-full break-words font-bold text-slate-700">{activeScopeLabel}</span>
             </div>
-            <ChatModeToggle disabled={answering} onChange={setChatMode} value={chatMode} />
-            <div className="hidden sm:block" aria-hidden="true" />
+            <span className="justify-self-start rounded-md bg-teal-50 px-2 py-1 font-black text-primary sm:justify-self-end">RAG tài liệu</span>
             {!scopeValid ? <span className="whitespace-normal text-amber-700 sm:col-span-3">{['DOCUMENTS', 'PERSONAL'].includes(scopeType) ? 'Chọn ít nhất một tài liệu đã xử lý.' : 'Phạm vi chưa có tài liệu khả dụng.'}</span> : null}
           </div>
 
@@ -418,7 +462,7 @@ export default function WorkspacePage() {
             <div className="mx-auto flex min-h-full w-full max-w-[800px] flex-col px-4 py-8 sm:px-8">
               {loadingCourse || loadingMessages ? (
                 <InlineLoading label="Đang tải cuộc trò chuyện" />
-              ) : messages.length ? (
+              ) : messages.length || answering ? (
                 <div className="space-y-7">
                   {messages.map((message, index) => (
                     <ChatMessage
@@ -430,7 +474,7 @@ export default function WorkspacePage() {
                       onSave={() => prepareNote(message)}
                     />
                   ))}
-                  {answering ? <AssistantThinking /> : null}
+                  {answering ? <ProcessingPanel steps={processingSteps} /> : null}
                 </div>
               ) : (
                 <div className="grid flex-1 place-items-center py-16 text-center">
@@ -481,10 +525,11 @@ export default function WorkspacePage() {
         savingNote={savingNote}
       />
     </div>
+    </AssistantRuntimeProvider>
   )
 }
 
-function Sidebar({ activeSessionId, courses, deletingId, materials, personalDocuments, navigate, onClose, onDelete,
+function Sidebar({ activeSessionId, courses, deletingId, pinningId, materials, personalDocuments, navigate, onClose, onDelete, onPin,
   onSelectSession, onToggleDocument, open, scopeType, selectedDocumentIds, sessions, setTab, tab }) {
   const content = (
     <aside className="flex h-full min-h-0 flex-col border-r border-slate-200/80 bg-slate-50/80">
@@ -508,10 +553,21 @@ function Sidebar({ activeSessionId, courses, deletingId, materials, personalDocu
               onClick={() => onSelectSession(item)}
               type="button"
             >
-              <MessageSquare className="shrink-0 text-primary" size={16} />
+              {item.isPinned ? <Pin className="shrink-0 text-primary" size={16} /> : <MessageSquare className="shrink-0 text-primary" size={16} />}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-bold">{item.title || 'Cuộc trò chuyện mới'}</span>
                 <span className="block truncate text-[11px] font-semibold text-slate-400">{item.scopeLabel || 'Môn học'} · {formatDate(item.updatedAt)}</span>
+              </span>
+              <span
+                aria-label={item.isPinned ? 'Bỏ ghim cuộc trò chuyện' : 'Ghim cuộc trò chuyện'}
+                className={cn('grid size-7 shrink-0 place-items-center rounded-lg transition hover:bg-teal-50 hover:text-primary focus:opacity-100', item.isPinned ? 'text-primary opacity-100' : 'text-slate-400 opacity-0 group-hover:opacity-100')}
+                onClick={(event) => onPin(event, item)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onPin(event, item) }}
+                role="button"
+                tabIndex={0}
+                title={item.isPinned ? 'Bỏ ghim' : 'Ghim'}
+              >
+                {pinningId === item.id ? <Loader2 className="animate-spin" size={14} /> : <Pin size={14} />}
               </span>
               <span
                 aria-label="Xóa cuộc trò chuyện"
@@ -720,47 +776,6 @@ function ScopeSelect({ children, label, ...props }) {
   )
 }
 
-function ChatModeToggle({ disabled, onChange, value }) {
-  const modes = [
-    { value: 'rag', label: 'RAG', icon: BookOpen },
-    { value: 'fine_tuning', label: 'Fine-tuning', icon: Bot },
-  ]
-  return (
-    <div className="mx-auto flex h-9 shrink-0 items-center rounded-xl bg-slate-100 p-1 shadow-inner shadow-slate-200/60" aria-label="AI model">
-      {modes.map(({ value: mode, label, icon: Icon }) => (
-        <button
-          aria-pressed={value === mode}
-          className={cn(
-            'relative isolate flex h-7 items-center gap-1.5 overflow-hidden rounded-lg px-2.5 text-xs font-black transition-colors sm:px-3',
-            value === mode ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
-            disabled && 'cursor-not-allowed opacity-70',
-          )}
-          disabled={disabled}
-          key={mode}
-          onClick={() => onChange(mode)}
-          type="button"
-        >
-          {value === mode ? (
-            <motion.span
-              className="absolute inset-0 -z-10 rounded-lg bg-white shadow-sm"
-              layoutId="chat-mode-active"
-              transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-            />
-          ) : null}
-          <motion.span
-            animate={{ scale: value === mode ? 1.08 : 1 }}
-            className="grid place-items-center"
-            transition={{ type: 'spring', stiffness: 380, damping: 24 }}
-          >
-            <Icon size={13} />
-          </motion.span>
-          <span className="relative">{label}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function ScopeModeControl({ disabled, onChange, value }) {
   const modes = [
     { value: 'PERSONAL', label: 'Cá nhân', icon: FolderLock },
@@ -802,8 +817,46 @@ function InlineLoading({ label }) {
   return <div className="grid flex-1 place-items-center py-16 text-sm font-bold text-slate-400"><span className="flex items-center gap-2"><Loader2 className="animate-spin text-primary" size={18} />{label}</span></div>
 }
 
-function AssistantThinking() {
-  return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl bg-primary text-white"><Bot size={17} /></div><div className="flex gap-1 rounded-xl bg-slate-100 px-4 py-3"><span className="size-1.5 animate-bounce rounded-full bg-slate-400" /><span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:120ms]" /><span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:240ms]" /></div></div>
+const PROCESSING_LABELS = {
+  SCOPE_CHECK: 'Kiểm tra phạm vi tài liệu',
+  CONTEXT_REWRITE: 'Làm rõ câu hỏi theo hội thoại',
+  RETRIEVAL: 'Tìm đoạn tài liệu liên quan',
+  GROUNDING_CHECK: 'Kiểm tra căn cứ từ nguồn',
+  GENERATION: 'Soạn câu trả lời',
+  CITATION_SAVE: 'Lưu trích dẫn',
+  COMPLETED: 'Hoàn tất',
+}
+
+function ProcessingPanel({ steps }) {
+  const visibleSteps = steps.length ? steps : [{ stage: 'SCOPE_CHECK', elapsedMs: 0 }]
+  return (
+    <div className="flex items-start gap-3" aria-live="polite">
+      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-white"><Bot size={17} /></div>
+      <div className="w-full max-w-md rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <p className="text-xs font-black uppercase text-slate-700">Quá trình xử lý</p>
+        <div className="mt-2 space-y-1.5">
+          {visibleSteps.map((step, index) => {
+            const finished = index < visibleSteps.length - 1 || step.stage === 'COMPLETED'
+            return <div className="flex items-center gap-2 text-xs font-semibold text-slate-600" key={step.stage}>
+              {finished ? <Check className="text-emerald-600" size={14} /> : <Loader2 className="animate-spin text-primary" size={14} />}
+              <span className="min-w-0 flex-1">{PROCESSING_LABELS[step.stage] || step.stage}</span>
+              <span className="tabular-nums text-slate-400">{formatElapsed(step.elapsedMs)}</span>
+            </div>
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function upsertProcessingStep(current, event) {
+  if (!event?.stage || event.stage === 'ERROR') return current
+  const next = current.filter((item) => item.stage !== event.stage)
+  return [...next, { stage: event.stage, elapsedMs: Number(event.elapsedMs ?? 0) }]
+}
+
+function formatElapsed(value) {
+  return `${(Math.max(0, Number(value) || 0) / 1000).toFixed(1)}s`
 }
 
 function pageRange(material) {
@@ -846,6 +899,15 @@ function formatDate(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Vừa tạo'
   return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+function sortSessions(items) {
+  return [...items].sort((left, right) => {
+    if (left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1
+    const leftTime = new Date(left.isPinned ? left.pinnedAt : left.updatedAt).getTime() || 0
+    const rightTime = new Date(right.isPinned ? right.pinnedAt : right.updatedAt).getTime() || 0
+    return rightTime - leftTime
+  })
 }
 
 function titleCase(value) {

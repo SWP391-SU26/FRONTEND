@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CheckCircle2, ChevronDown, FileText, Loader2, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FileText, Loader2, RefreshCw, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { clearFinishedUploads, removeUpload, subscribe } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
@@ -38,10 +38,10 @@ export function UploadProgressPopup() {
             </div>
             <div className="min-w-0">
               <h2 className="truncate text-sm font-black text-slate-950">
-                {activeCount > 0 ? `${activeCount} file task${activeCount > 1 ? 's' : ''} in progress` : 'File activity finished'}
+                {activeCount > 0 ? `${activeCount} tác vụ đang xử lý` : 'Đã xử lý xong'}
               </h2>
               <p className="text-xs font-semibold text-slate-500">
-                {completedCount} completed{failedCount ? `, ${failedCount} failed` : ''}
+                {completedCount} hoàn tất{failedCount ? `, ${failedCount} thất bại` : ''}
               </p>
             </div>
           </div>
@@ -53,11 +53,11 @@ export function UploadProgressPopup() {
                 onClick={clearFinishedUploads}
                 type="button"
               >
-                Clear
+                Xóa xong
               </button>
             ) : null}
             <button
-              aria-label={collapsed ? 'Expand upload progress' : 'Collapse upload progress'}
+              aria-label={collapsed ? 'Mở rộng tiến trình' : 'Thu gọn tiến trình'}
               className="grid size-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               onClick={() => setCollapsed((value) => !value)}
               type="button"
@@ -67,10 +67,10 @@ export function UploadProgressPopup() {
               </motion.span>
             </button>
             <button
-              aria-label="Close upload progress"
+              aria-label="Đóng popup tiến trình"
               className="grid size-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               onClick={() => setDismissedBefore(Date.now())}
-              title="Ẩn tiến trình upload"
+              title="Ẩn tiến trình"
               type="button"
             >
               <X size={17} />
@@ -119,7 +119,7 @@ function UploadProgressItem({ upload }) {
             failed ? 'bg-red-100 text-red-600' : completed ? 'bg-emerald-100 text-emerald-600' : 'bg-white text-teal-600',
           )}
         >
-          {failed ? <XCircle size={17} /> : completed ? <CheckCircle2 size={17} /> : upload.action === 'DELETE' ? <Trash2 size={17} /> : <FileText size={17} />}
+          {failed ? <XCircle size={17} /> : completed ? <CheckCircle2 size={17} /> : operationIcon(upload.action)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
@@ -131,7 +131,7 @@ function UploadProgressItem({ upload }) {
             </div>
             {!active ? (
               <button
-                aria-label={`Dismiss ${upload.name}`}
+                aria-label={`Ẩn tác vụ ${upload.name}`}
                 className="grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
                 onClick={() => removeUpload(upload.id)}
                 type="button"
@@ -143,20 +143,34 @@ function UploadProgressItem({ upload }) {
 
           <div className="mt-3 flex items-center gap-2">
             <div className="h-2 flex-1 overflow-hidden rounded-full bg-white shadow-inner">
-              <motion.div
-                animate={{ width: `${failed ? 100 : progress}%` }}
-                className={cn('h-full rounded-full', failed ? 'bg-red-400' : completed ? 'bg-emerald-400' : 'bg-teal-500')}
-                transition={{ duration: 0.25 }}
-              />
+              {upload.indeterminate && active ? (
+                <motion.div
+                  animate={{ x: ['-100%', '280%'] }}
+                  className="h-full w-1/3 rounded-full bg-teal-500"
+                  transition={{ duration: 1.1, ease: 'easeInOut', repeat: Infinity }}
+                />
+              ) : (
+                <motion.div
+                  animate={{ width: `${failed ? 100 : progress}%` }}
+                  className={cn('h-full rounded-full', failed ? 'bg-red-400' : completed ? 'bg-emerald-400' : 'bg-teal-500')}
+                  transition={{ duration: 0.25 }}
+                />
+              )}
             </div>
             <span className={cn('w-10 text-right text-[11px] font-black', failed ? 'text-red-600' : 'text-slate-500')}>
-              {failed ? 'Fail' : `${Math.round(progress)}%`}
+              {failed ? 'Lỗi' : upload.indeterminate && active ? 'Chờ' : `${Math.round(progress)}%`}
             </span>
           </div>
         </div>
       </div>
     </div>
   )
+}
+
+function operationIcon(action) {
+  if (action === 'DELETE') return <Trash2 size={17} />
+  if (action === 'UPDATE') return <RefreshCw size={17} />
+  return <FileText size={17} />
 }
 
 function isCompletedUpload(upload) {

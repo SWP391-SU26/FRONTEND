@@ -17,12 +17,14 @@ import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
 import { Button, EmptyState, Panel, SelectField, StatusBadge } from '../../components/ui.jsx'
 import { getDocuments } from '../../services/documentService.js'
 import * as evaluationService from '../../services/evaluationService.js'
+import { getEmbeddingModels } from '../../services/ragService.js'
 
 export function AdminTestSetPage() {
   const [scopes, setScopes] = useState([])
   const [datasets, setDatasets] = useState([])
   const [documents, setDocuments] = useState([])
   const [experiments, setExperiments] = useState([])
+  const [embeddingModels, setEmbeddingModels] = useState([])
   const [questions, setQuestions] = useState([])
   const [selectedSemesterId, setSelectedSemesterId] = useState('')
   const [selectedCourseId, setSelectedCourseId] = useState('')
@@ -48,12 +50,14 @@ export function AdminTestSetPage() {
       evaluationService.getDatasets(),
       evaluationService.getExperiments(),
       getDocuments(),
-    ]).then(([scopeItems, datasetItems, experimentItems, documentItems]) => {
+      getEmbeddingModels(),
+    ]).then(([scopeItems, datasetItems, experimentItems, documentItems, embeddingModelItems]) => {
       if (!active) return
       setScopes(scopeItems)
       setDatasets(datasetItems)
       setExperiments(experimentItems)
       setDocuments(documentItems)
+      setEmbeddingModels(embeddingModelItems)
       setSelectedSemesterId(scopeItems[0]?.id ?? '')
       const firstCourseId = scopeItems[0]?.courses?.[0]?.id ?? ''
       setSelectedCourseId(firstCourseId)
@@ -75,6 +79,8 @@ export function AdminTestSetPage() {
     [documents, selectedCourseId],
   )
   const selectedDataset = datasets.find((dataset) => dataset.id === selectedDatasetId) ?? null
+  const bgeModel = embeddingModels.find((model) => model.name?.toLowerCase() === 'baai/bge-m3' && model.isActive)
+    ?? embeddingModels.find((model) => model.name?.toLowerCase().includes('bge-m3'))
   const datasetExperiments = experiments.filter((experiment) => experiment.datasetId === selectedDatasetId)
   const snapshotSignature = `${selectedCourseId}|${datasetName.trim()}|${[...selectedDocumentIds].sort().join(',')}`
   const snapshotJustCreated = Boolean(
@@ -216,14 +222,19 @@ export function AdminTestSetPage() {
 
   async function createExperiment(event) {
     event.preventDefault()
-    if (!selectedDatasetId || !experimentName.trim() || !llmModel.trim()) return
+    if (!selectedDatasetId || !experimentName.trim() || !llmModel.trim() || !bgeModel) return
     await submit(async () => {
       const created = await evaluationService.createExperiment({
         datasetId: selectedDatasetId,
         experimentName: experimentName.trim(),
         experimentType,
         llmModel: llmModel.trim(),
-        configJson: JSON.stringify({ metrics: 'local-proxy', strict: true }),
+        embeddingModelId: bgeModel.id,
+        chunkingStrategy: 'PARAGRAPH_700_120',
+        topK: 5,
+        similarityThreshold: 0.25,
+        randomSeed: 42,
+        configJson: JSON.stringify({ metricStandard: 'OFFICIAL_RAGAS', strict: true }),
       })
       setExperiments((current) => [created, ...current])
       setExperimentName('')
@@ -395,7 +406,7 @@ export function AdminTestSetPage() {
               ))}
               {!selectedDatasetId ? <p className="text-sm text-slate-500">Select a dataset to see blockers.</p> : null}
             </div>
-            <p className="mt-3 text-xs leading-5 text-slate-500">Metrics are transparent local proxies, not official RAGAS. Context and citation metrics are not applicable to Fine-tuned runs.</p>
+            <p className="mt-3 text-xs leading-5 text-slate-500">Official RAGAS uses gpt-4o-mini as judge and text-embedding-3-small for evaluator embeddings. Context metrics are not applicable to Fine-tuned runs.</p>
           </Panel>
 
           <Panel className="p-5">
@@ -408,7 +419,12 @@ export function AdminTestSetPage() {
               </div>
               <input className="control" onChange={(event) => setExperimentName(event.target.value)} placeholder="Experiment name" value={experimentName} />
               <input className="control" onChange={(event) => setLlmModel(event.target.value)} placeholder="Model name" value={llmModel} />
-              <Button disabled={submitting || !selectedDatasetId || !experimentName.trim()} type="submit"><Plus size={16} />Create experiment</Button>
+              <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600">
+                <span className="rounded-lg border border-slate-200 bg-white px-3 py-2">BGE-M3 · Paragraph 700/120</span>
+                <span className="rounded-lg border border-slate-200 bg-white px-3 py-2">topK 5 · threshold 0.25 · seed 42</span>
+              </div>
+              {!bgeModel ? <p className="text-xs font-semibold text-red-700">Không tìm thấy embedding model BAAI/bge-m3 đang hoạt động.</p> : null}
+              <Button disabled={submitting || !selectedDatasetId || !experimentName.trim() || !bgeModel} type="submit"><Plus size={16} />Create experiment</Button>
             </form>
           </Panel>
 
@@ -425,7 +441,7 @@ export function AdminTestSetPage() {
                 ) : null}
                 {experiment.status === 'PENDING' ? <p className="mt-2 text-xs font-semibold text-sky-700">Ready. Click Run to start this benchmark.</p> : null}
                 {experiment.status === 'QUEUED' ? <p className="mt-2 text-xs font-semibold text-violet-700">Waiting for the current GPU job to finish.</p> : null}
-                {experiment.status === 'CANCELLED' ? <p className="mt-2 text-xs font-semibold text-slate-600">Cancelled at {experiment.progress}%. You can rerun it from the beginning.</p> : null}
+                {experiment.status === 'CANCELLED' ? <p className="mt-2 text-xs font-semibold text-slate-600">Cancelled at {experiment.progress}%. Create a new experiment to run again.</p> : null}
                 {experiment.errorMessage ? <p className="mt-2 text-xs leading-5 text-red-700">{experiment.errorMessage}</p> : null}
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <p className="text-xs text-slate-500">{experiment.successCount} succeeded · {experiment.failureCount} failed</p>
@@ -433,16 +449,16 @@ export function AdminTestSetPage() {
                     <Button disabled={submitting} onClick={() => cancelExperiment(experiment)} size="sm" variant="danger">
                       <Square size={13} />Cancel run
                     </Button>
-                  ) : (
+                  ) : experiment.status === 'PENDING' ? (
                     <Button
                       disabled={submitting}
                       onClick={() => runExperiment(experiment)}
                       size="sm"
-                      variant={experiment.status === 'PENDING' ? 'primary' : 'secondary'}
+                      variant="primary"
                     >
-                      <Play size={14} />{['COMPLETED', 'FAILED', 'CANCELLED'].includes(experiment.status) ? 'Rerun' : 'Run benchmark'}
+                      <Play size={14} />Run benchmark
                     </Button>
-                  )}
+                  ) : <span className="text-xs font-semibold text-slate-400">Immutable run</span>}
                 </div>
               </div>
             )) : <EmptyState title="No experiment" description="Create a RAG or Fine-tuned experiment for the selected dataset." />}

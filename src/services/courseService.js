@@ -31,6 +31,9 @@ export async function setCourseStatus(courseId, status) {
 }
 
 export function deleteCourse(courseId) { return request(`/courses/${courseId}`, { method: 'DELETE' }) }
+export async function getCourseTrash() { return list(await request('/courses/trash')).map(toUiCourse) }
+export async function restoreCourse(courseId) { return toUiCourse(unwrap(await request(`/courses/${courseId}/restore`, { method: 'POST' }))) }
+export function permanentlyDeleteCourse(courseId) { return request(`/courses/${courseId}/permanent`, { method: 'DELETE' }) }
 export function getPublishChecklist(courseId) { return request(`/courses/${courseId}/publish-checklist`) }
 
 export async function getSemesterWorkspaces() { return list(await request('/semester-workspaces')).map(toUiSemester) }
@@ -38,6 +41,9 @@ export async function createSemesterWorkspace(payload) { return toUiSemester(unw
 export async function updateSemesterWorkspace(id, payload) { return toUiSemester(unwrap(await request(`/semester-workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }))) }
 export async function setSemesterStatus(id, status) { return toUiSemester(unwrap(await request(`/semester-workspaces/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }))) }
 export function deleteSemesterWorkspace(id) { return request(`/semester-workspaces/${id}`, { method: 'DELETE' }) }
+export async function getSemesterTrash() { return list(await request('/semester-workspaces/trash')).map(toUiSemester) }
+export async function restoreSemesterWorkspace(id) { return toUiSemester(unwrap(await request(`/semester-workspaces/${id}/restore`, { method: 'POST' }))) }
+export function permanentlyDeleteSemesterWorkspace(id) { return request(`/semester-workspaces/${id}/permanent`, { method: 'DELETE' }) }
 export async function getSemesterCourses(id) { return list(await request(`/semester-workspaces/${id}/courses`)).map(toUiCourse) }
 
 export function getCourseMembers(courseId) { return request(`/courses/${courseId}/members`) }
@@ -50,7 +56,7 @@ export function confirmChapterSuggestions(documentId, chapters) { return request
 export async function createChapter(courseId, payload) { return toUiChapter(unwrap(await request(`/courses/${courseId}/chapters`, { method: 'POST', body: JSON.stringify(payload) }))) }
 export async function createWorkspace(courseId, payload) { return toUiWorkspace(unwrap(await request(`/courses/${courseId}/workspaces`, { method: 'POST', body: JSON.stringify(payload) }))) }
 
-function toUiSemester(item) { return { id: item.semesterWorkspaceId, code: item.semesterCode, name: item.semesterName, status: item.status } }
-function toUiCourse(course) { return { id: course.courseId, code: course.courseCode, name: course.courseName, description: course.description, semesterWorkspaceId: course.semesterWorkspaceId, status: course.status ?? 'DRAFT', isActive: course.isActive } }
+function toUiSemester(item) { return { id: item.semesterWorkspaceId, code: item.semesterCode, name: item.semesterName, status: item.status, deletedAt: item.deletedAt ?? null } }
+function toUiCourse(course) { return { id: course.courseId, code: course.courseCode, name: course.courseName, description: course.description, semesterWorkspaceId: course.semesterWorkspaceId, status: course.status ?? 'DRAFT', isActive: course.isActive, deletedAt: course.deletedAt ?? null } }
 function toUiChapter(chapter) { return { id: chapter.chapterId, courseId: chapter.courseId, title: chapter.chapterTitle, description: chapter.description, orderIndex: chapter.orderIndex, isActive: chapter.isActive } }
 function toUiWorkspace(workspace) { return { id: workspace.workspaceId, courseId: workspace.courseId, ownerUserId: workspace.ownerUserId, name: workspace.workspaceTitle, description: workspace.description, visibility: workspace.visibility, isActive: workspace.isActive } }

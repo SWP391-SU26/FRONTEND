@@ -70,6 +70,11 @@ export async function createExperiment(payload) {
       experimentName: payload.experimentName,
       experimentType: payload.experimentType,
       llmModel: payload.llmModel,
+      embeddingModelId: payload.embeddingModelId,
+      chunkingStrategy: payload.chunkingStrategy ?? 'PARAGRAPH_700_120',
+      topK: payload.topK ?? 5,
+      similarityThreshold: payload.similarityThreshold ?? 0.25,
+      randomSeed: payload.randomSeed ?? 42,
       configJson: payload.configJson || '{}',
     }),
   }))
@@ -116,7 +121,12 @@ export async function getExperimentResults(experimentId) {
 
 export async function getComparison({ datasetId, ragExperimentId, fineTunedExperimentId }) {
   const query = new URLSearchParams({ datasetId, ragExperimentId, fineTunedExperimentId })
-  return request(`/evaluation/comparison?${query}`)
+  const comparison = await request(`/evaluation/comparison?${query}`)
+  return { ...comparison, ...(comparison?.methodology ?? {}) }
+}
+
+export async function getExperimentAggregates(experimentId) {
+  return unwrapList(await request(`/evaluation/experiments/${experimentId}/aggregates`))
 }
 
 export function createFineTuningRecord({ name, datasetId, llmModel, configJson }) {
@@ -204,6 +214,15 @@ function toUiExperiment(experiment) {
     createdAt: experiment.createdAt,
     updatedAt: experiment.updatedAt,
     errorMessage: experiment.errorMessage ?? null,
+    embeddingModelId: experiment.embeddingModelId ?? null,
+    chunkingStrategy: experiment.chunkingStrategy ?? null,
+    topK: Number(experiment.topK ?? 5),
+    similarityThreshold: Number(experiment.similarityThreshold ?? 0.25),
+    randomSeed: Number(experiment.randomSeed ?? 42),
+    metricStandard: experiment.metricStandard ?? 'LOCAL_PROXY',
+    embeddingModelVersion: experiment.embeddingModelVersion ?? null,
+    generationModelVersion: experiment.generationModelVersion ?? null,
+    frozenConfigHash: experiment.frozenConfigHash ?? null,
   }
 }
 
@@ -229,6 +248,12 @@ function toUiExperimentResult(result) {
     effectiveLatencyMs: result.effectiveLatencyMs ?? result.latencyMs,
     batchSize: result.batchSize,
     errorMessage: result.errorMessage,
+    ragasStatus: result.ragasStatus ?? null,
+    ragasError: result.ragasError ?? null,
+    metricStandard: result.metricStandard ?? null,
+    evaluatorModel: result.evaluatorModel ?? null,
+    evaluatorModelVersion: result.evaluatorModelVersion ?? null,
+    evaluatorEmbeddingModel: result.evaluatorEmbeddingModel ?? null,
   }
 }
 

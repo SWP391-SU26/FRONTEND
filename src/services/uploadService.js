@@ -1,4 +1,9 @@
-import { deleteDocument, uploadDocument, waitForIndexingJob } from './documentService.js'
+import {
+  deleteDocument,
+  uploadDocument,
+  uploadPersonalDocument,
+  waitForIndexingJob,
+} from './documentService.js'
 
 let uploads = []
 const listeners = new Set()
@@ -10,9 +15,7 @@ export function getUploads() {
 export function subscribe(listener) {
   listeners.add(listener)
   listener([...uploads])
-  return () => {
-    listeners.delete(listener)
-  }
+  return () => listeners.delete(listener)
 }
 
 export function uploadFiles(files, metadata) {
@@ -23,16 +26,43 @@ export function uploadFile(file, metadata) {
   return startUpload(file, metadata).promise
 }
 
+export function uploadPersonalFiles(files) {
+  let queue = Promise.resolve()
+  return Array.from(files).map((file) => {
+    const task = createPersonalUpload(file)
+    const promise = queue.then(() => runPersonalUpload(task.id, file))
+    queue = promise.catch(() => undefined)
+    return { id: task.id, promise }
+  })
+}
+
+export function uploadPersonalFile(file) {
+  const task = createPersonalUpload(file)
+  return runPersonalUpload(task.id, file)
+}
+
 export function deleteFile(document) {
-  const id = `delete-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`
-  const task = { id, action: 'DELETE', name: document.displayName ?? document.name ?? document.originalFilename ?? 'Document', status: 'Deleting', stage: 'Deleting', progress: 10, preview: 'Removing document, chunks, and stored file…', isUploading: true, createdAt: Date.now() }
-  uploads = [task, ...uploads]
-  notify()
-  return deleteDocument(document.id ?? document.documentId).then(() => {
-    updateUpload(id, { status: 'Deleted', stage: 'Completed', progress: 100, preview: 'Document deleted.', isUploading: false, completedAt: Date.now() })
-  }).catch((error) => {
-    updateUpload(id, { status: 'Failed', stage: 'Failed', progress: 100, preview: error.message, errorMessage: error.message, isUploading: false, completedAt: Date.now() })
-    throw error
+  return trackDocumentOperation({
+    action: 'DELETE',
+    document,
+    pendingText: 'Đang xóa tài liệu và dữ liệu liên quan...',
+    completedText: 'Đã xóa tài liệu.',
+    operation: () => deleteDocument(document.id ?? document.documentId),
+    eventName: 'fstu:document-deleted',
+  })
+}
+
+export function updateFile(document, operation, {
+  pendingText = 'Đang cập nhật tài liệu...',
+  completedText = 'Đã cập nhật tài liệu.',
+} = {}) {
+  return trackDocumentOperation({
+    action: 'UPDATE',
+    document,
+    pendingText,
+    completedText,
+    operation,
+    eventName: 'fstu:document-updated',
   })
 }
 
@@ -52,6 +82,7 @@ function startUpload(file, metadata) {
   const createdAt = Date.now()
   const newUpload = {
     id: uploadId,
+    action: 'UPLOAD',
     name: file.name,
     displayName: file.name.replace(/\.[^/.]+$/, ''),
     type: file.name.split('.').pop()?.toUpperCase() || 'FILE',
@@ -78,6 +109,63 @@ function startUpload(file, metadata) {
   return { id: uploadId, promise }
 }
 
+function createPersonalUpload(file) {
+  const uniqueId = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
+  const id = `personal-upload-${Date.now()}-${uniqueId}`
+  const createdAt = Date.now()
+  const task = {
+    id,
+    action: 'UPLOAD',
+    name: file.name,
+    displayName: file.name.replace(/\.[^/.]+$/, ''),
+    type: file.name.split('.').pop()?.toUpperCase() || 'FILE',
+    status: 'Queued',
+    stage: 'Queued',
+    progress: 0,
+    uploadProgress: 0,
+    size: `${Math.max(0.1, file.size / 1024 / 1024).toFixed(1)} MB`,
+    preview: 'Đang chờ tải lên...',
+    isUploading: true,
+    createdAt,
+  }
+  uploads = [task, ...uploads]
+  notify()
+  return task
+}
+
+async function runPersonalUpload(id, file) {
+  try {
+    updateUpload(id, {
+      status: 'Uploading',
+      stage: 'Uploading',
+      progress: 1,
+      preview: 'Đang gửi tài liệu lên hệ thống...',
+    })
+    const document = await uploadPersonalDocument({
+      file,
+      onUploadProgress: (percent) => updateUpload(id, {
+        uploadProgress: percent,
+        progress: clampProgress(Math.round(percent * 0.95)),
+        preview: 'Đang tải tài liệu lên...',
+      }),
+    })
+    updateUpload(id, {
+      ...document,
+      status: 'Completed',
+      stage: 'Completed',
+      progress: 100,
+      preview: 'Tải tài liệu hoàn tất.',
+      isUploading: false,
+      completedAt: Date.now(),
+    })
+    window.dispatchEvent(new CustomEvent('fstu:document-uploaded', { detail: document }))
+    return document
+  } catch (error) {
+    failUpload(id, error)
+    throw error
+  }
+}
+
 async function runUpload(uploadId, file, metadata) {
   try {
     updateUpload(uploadId, {
@@ -92,13 +180,11 @@ async function runUpload(uploadId, file, metadata) {
       workspaceId: metadata.workspaceId,
       courseId: metadata.courseId,
       chapterId: metadata.chapterId,
-      onUploadProgress: (percent) => {
-        updateUpload(uploadId, {
-          uploadProgress: percent,
-          progress: clampProgress(Math.round(percent * 0.45)),
-          preview: 'Uploading file...',
-        })
-      },
+      onUploadProgress: (percent) => updateUpload(uploadId, {
+        uploadProgress: percent,
+        progress: clampProgress(Math.round(percent * 0.45)),
+        preview: 'Uploading file...',
+      }),
     })
 
     const uploadedDoc = result.document
@@ -131,7 +217,6 @@ async function runUpload(uploadId, file, metadata) {
       status: result.job ? 'Indexed' : uploadedDoc.status,
       embeddingStatus: result.job ? 'Prepared' : uploadedDoc.embeddingStatus,
     }
-
     updateUpload(uploadId, {
       ...completedDoc,
       isUploading: false,
@@ -141,21 +226,64 @@ async function runUpload(uploadId, file, metadata) {
       preview: 'Upload completed.',
       completedAt: Date.now(),
     })
-
     window.dispatchEvent(new CustomEvent('fstu:document-uploaded', { detail: completedDoc }))
     return completedDoc
   } catch (error) {
-    updateUpload(uploadId, {
-      status: 'Failed',
-      stage: 'Failed',
-      progress: 100,
-      preview: error.message,
-      isUploading: false,
-      errorMessage: error.message,
-      completedAt: Date.now(),
-    })
+    failUpload(uploadId, error)
     throw error
   }
+}
+
+function trackDocumentOperation({ action, document, pendingText, completedText, operation, eventName }) {
+  const id = `${action.toLowerCase()}-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`
+  const task = {
+    id,
+    action,
+    documentId: document.id ?? document.documentId,
+    name: document.displayName ?? document.name ?? document.originalFilename ?? 'Tài liệu',
+    status: action === 'DELETE' ? 'Deleting' : 'Updating',
+    stage: action === 'DELETE' ? 'Deleting' : 'Updating',
+    progress: 20,
+    preview: pendingText,
+    indeterminate: true,
+    isUploading: true,
+    createdAt: Date.now(),
+  }
+  uploads = [task, ...uploads]
+  notify()
+
+  return Promise.resolve()
+    .then(operation)
+    .then((result) => {
+      updateUpload(id, {
+        status: 'Completed',
+        stage: 'Completed',
+        progress: 100,
+        preview: completedText,
+        indeterminate: false,
+        isUploading: false,
+        completedAt: Date.now(),
+      })
+      window.dispatchEvent(new CustomEvent(eventName, { detail: result ?? document }))
+      return result
+    })
+    .catch((error) => {
+      failUpload(id, error)
+      throw error
+    })
+}
+
+function failUpload(id, error) {
+  updateUpload(id, {
+    status: 'Failed',
+    stage: 'Failed',
+    progress: 100,
+    preview: error.message,
+    errorMessage: error.message,
+    indeterminate: false,
+    isUploading: false,
+    completedAt: Date.now(),
+  })
 }
 
 function updateUpload(id, patch) {

@@ -5,8 +5,11 @@ const { comparison } = vi.hoisted(() => ({ comparison: {
   datasetId: 'dataset-1',
   datasetChecksum: 'same-checksum',
   dataset: { datasetId: 'dataset-1', name: 'Triết học 50 câu', questionCount: 50, documentCount: 1 },
-  metricStandard: 'LOCAL_PROXY',
-  formulaVersion: 'token-overlap-v1',
+  metricStandard: 'OFFICIAL_RAGAS',
+  officialRagas: true,
+  label: 'Official RAGAS',
+  evaluatorModel: 'gpt-4o-mini',
+  evaluatorEmbeddingModel: 'text-embedding-3-small',
   benchmarkProfile: { version: 'full-batch-v1', batchSize: 4, maxInputTokens: 448, maxNewTokens: 64 },
   ragExperiment: {
     name: 'RAG 6', status: 'COMPLETED', answerCorrectness: 0.11, answerRelevance: 0.11,
@@ -38,13 +41,13 @@ import { AdminResearchDashboardPage, buildComparisonCsv, buildResearchConclusion
 
 beforeEach(() => vi.clearAllMocks())
 
-it('renders a plain-language RBL conclusion and transparent local proxy warning', async () => {
+it('renders a plain-language RBL conclusion and official RAGAS metadata', async () => {
   render(<AdminResearchDashboardPage />)
 
   expect(await screen.findByText('Kết luận thực nghiệm')).toBeInTheDocument()
   expect(screen.getByText(/Fine-tuned khớp ground truth cao hơn 15 điểm phần trăm/)).toBeInTheDocument()
   expect(screen.getByText(/Fine-tuned trả lời nhanh hơn khoảng 44%/)).toBeInTheDocument()
-  expect(screen.getByText(/đây là local proxy, không phải official RAGAS/i)).toBeInTheDocument()
+  expect(screen.getByText(/Official RAGAS 0.4.3/i)).toBeInTheDocument()
   expect(screen.getAllByText(/Không áp dụng/).length).toBeGreaterThanOrEqual(3)
   expect(await screen.findByRole('heading', { name: 'Kết quả trực quan trên cùng dataset snapshot' }, { timeout: 5000 })).toBeInTheDocument()
   expect(screen.getByText('Fine-tuned +15 điểm %')).toBeInTheDocument()

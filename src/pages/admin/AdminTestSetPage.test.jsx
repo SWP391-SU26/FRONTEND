@@ -7,6 +7,12 @@ vi.mock('../../services/documentService.js', () => ({
   ]),
 }))
 
+vi.mock('../../services/ragService.js', () => ({
+  getEmbeddingModels: vi.fn().mockResolvedValue([
+    { id: 'bge-m3', name: 'BAAI/bge-m3', isActive: true, status: 'AVAILABLE' },
+  ]),
+}))
+
 vi.mock('../../services/evaluationService.js', () => ({
   getEvaluationScopes: vi.fn().mockResolvedValue([
     { id: 'semester-1', name: 'Fall 2026', courses: [{ id: 'course-1', code: 'SWP391', name: 'Software Project' }] },
@@ -118,8 +124,8 @@ it('allows a running benchmark to be cancelled and keeps partial progress', asyn
 
   await waitFor(() => expect(evaluationService.cancelBenchmark).toHaveBeenCalledWith('experiment-1'))
   expect(await screen.findByText('Cancelled')).toBeInTheDocument()
-  expect(screen.getByText('Cancelled at 35%. You can rerun it from the beginning.')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Rerun' })).toBeEnabled()
+  expect(screen.getByText('Cancelled at 35%. Create a new experiment to run again.')).toBeInTheDocument()
+  expect(screen.getByText('Immutable run')).toBeInTheDocument()
 })
 
 it('shows a queued benchmark profile and allows cancellation before GPU execution', async () => {

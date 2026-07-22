@@ -1,4 +1,5 @@
 import { request } from './httpClient.js'
+import { env } from '../config/env.js'
 
 export async function getSessions(scope) {
   const params = typeof scope === 'string' ? { courseId: scope } : scope
@@ -43,6 +44,68 @@ export async function askQuestion(sessionId, question, { mode = 'rag' } = {}) {
   }
 }
 
+export async function pinSession(sessionId, pinned) {
+  return toUiSession(await request(`/chat/sessions/${sessionId}/pin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ pinned }),
+  }))
+}
+
+export async function askQuestionStream(sessionId, question, { onStage } = {}) {
+  const token = localStorage.getItem('fstu_access_token')
+  const response = await fetch(`${env.apiBaseUrl}/chat/sessions/${sessionId}/ask/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ question, answerMode: 'RAG' }),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.message || payload?.error || `Chat stream failed with status ${response.status}`)
+  }
+  if (!response.body) throw new Error('Trình duyệt không nhận được luồng trả lời từ máy chủ.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completedResponse = null
+
+  const consumeBlock = (block) => {
+    if (!block.trim()) return
+    let eventName = 'message'
+    const dataLines = []
+    block.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    })
+    if (!dataLines.length) return
+    const rawData = dataLines.join('\n')
+    let payload
+    try { payload = JSON.parse(rawData) } catch { payload = { message: rawData } }
+    const stage = payload.stage || eventName
+    onStage?.({ ...payload, stage })
+    if (stage === 'ERROR') throw new Error(payload.message || 'Máy chủ không thể hoàn tất câu trả lời.')
+    if (stage === 'COMPLETED') completedResponse = normalizeAskResponse(payload.response)
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+    const blocks = buffer.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() ?? ''
+    blocks.forEach(consumeBlock)
+    if (done) break
+  }
+  consumeBlock(buffer)
+
+  if (!completedResponse) throw new Error('Luồng trả lời đã ngắt trước khi hoàn tất. Bạn có thể gửi lại câu hỏi.')
+  return completedResponse
+}
+
 export function saveNote(payload) {
   return request('/chat/notes', {
     method: 'POST',
@@ -70,6 +133,8 @@ function toUiSession(session) {
     messageCount: session.messageCount ?? 0,
     createdAt: session.startedAt ?? session.createdAt,
     updatedAt: session.updatedAt ?? session.startedAt ?? session.createdAt,
+    isPinned: Boolean(session.isPinned),
+    pinnedAt: session.pinnedAt ?? null,
   }
 }
 
@@ -108,6 +173,14 @@ function toUiCitation(citation) {
     pageStart: citation.pageStart ?? citation.page ?? citation.sourcePage ?? null,
     pageEnd: citation.pageEnd ?? citation.pageStart ?? citation.page ?? citation.sourcePage ?? null,
     quoteText: citation.quoteText ?? citation.excerpt ?? citation.preview ?? '',
+  }
+}
+
+function normalizeAskResponse(response) {
+  return {
+    ...response,
+    generationMode: response?.generationMode ?? 'LOCAL_EXTRACTIVE',
+    citations: (response?.citations ?? []).map(toUiCitation),
   }
 }
 

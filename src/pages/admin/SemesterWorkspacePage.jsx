@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Archive, BookOpen, Edit3, FileText, Loader2, Plus, Trash2, Upload, X } from 'lucide-react'
-import { Button, EmptyState, Panel, StatusBadge } from '../../components/ui.jsx'
+import { BookOpen, Edit3, FileText, Loader2, Plus, RotateCcw, Trash2, Upload, X } from 'lucide-react'
+import { Button, ConfirmModal, EmptyState, Panel, StatusBadge } from '../../components/ui.jsx'
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
-import { deleteDocument, getDocuments } from '../../services/documentService.js'
+import { deleteDocument, getDocuments, getDocumentTrash, permanentlyDeleteDocument, restoreDocument } from '../../services/documentService.js'
 import {
   createCourse,
   createSemesterWorkspace,
   deleteCourse,
   deleteSemesterWorkspace,
   getSemesterCourses,
+  getCourseTrash,
+  getSemesterTrash,
   getSemesterWorkspaces,
+  permanentlyDeleteCourse,
+  permanentlyDeleteSemesterWorkspace,
+  restoreCourse,
+  restoreSemesterWorkspace,
   setSemesterStatus,
   updateCourse,
   updateSemesterWorkspace,
@@ -33,6 +39,9 @@ export default function SemesterWorkspacePage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [loading, setLoading] = useState(true)
+  const [showTrash, setShowTrash] = useState(false)
+  const [trash, setTrash] = useState({ semesters: [], courses: [], documents: [] })
+  const [confirmTarget, setConfirmTarget] = useState(null)
 
   useEffect(() => { loadSemesters() }, [])
   useEffect(() => {
@@ -136,7 +145,10 @@ export default function SemesterWorkspacePage() {
   }
 
   async function removeSemester() {
-    if (!window.confirm('Archive this semester and all of its courses?')) return
+    setConfirmTarget({ kind: 'semester', item: current, action: 'trash' })
+  }
+
+  async function confirmRemoveSemester() {
     try {
       await deleteSemesterWorkspace(selected)
       setSelected('')
@@ -148,7 +160,10 @@ export default function SemesterWorkspacePage() {
   }
 
   async function removeCourse() {
-    if (!window.confirm('Archive this course? It will no longer be available for chat.')) return
+    setConfirmTarget({ kind: 'course', item: activeCourse, action: 'trash' })
+  }
+
+  async function confirmRemoveCourse() {
     try {
       await deleteCourse(activeCourse.id)
       setActiveCourse(null)
@@ -175,12 +190,73 @@ export default function SemesterWorkspacePage() {
   }
 
   async function removeDocument(document) {
-    if (!window.confirm(`Delete ${document.name}?`)) return
+    setConfirmTarget({ kind: 'document', item: document, action: 'trash' })
+  }
+
+  async function confirmRemoveDocument(document) {
     try {
       await deleteDocument(document.id)
       await loadCourses(selected)
     } catch (e) {
       setError(e.message)
+    }
+  }
+
+  async function loadTrash() {
+    setLoading(true)
+    setError('')
+    try {
+      const [semesterItems, courseItems, documentItems] = await Promise.all([
+        getSemesterTrash(), getCourseTrash(), getDocumentTrash(),
+      ])
+      setTrash({ semesters: semesterItems, courses: courseItems, documents: documentItems })
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function toggleTrash() {
+    const next = !showTrash
+    setShowTrash(next)
+    if (next) await loadTrash()
+  }
+
+  async function restoreTrashItem(kind, item) {
+    setBusy(true)
+    setError('')
+    try {
+      if (kind === 'semester') await restoreSemesterWorkspace(item.id)
+      if (kind === 'course') await restoreCourse(item.id)
+      if (kind === 'document') await restoreDocument(item.id)
+      await Promise.all([loadTrash(), loadSemesters()])
+      setNotice(`${item.name || item.displayName} restored as inactive.`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function executeConfirm() {
+    if (!confirmTarget) return
+    setBusy(true)
+    setError('')
+    try {
+      const { kind, item, action } = confirmTarget
+      if (action === 'trash' && kind === 'semester') await confirmRemoveSemester()
+      if (action === 'trash' && kind === 'course') await confirmRemoveCourse()
+      if (action === 'trash' && kind === 'document') await confirmRemoveDocument(item)
+      if (action === 'permanent' && kind === 'semester') await permanentlyDeleteSemesterWorkspace(item.id)
+      if (action === 'permanent' && kind === 'course') await permanentlyDeleteCourse(item.id)
+      if (action === 'permanent' && kind === 'document') await permanentlyDeleteDocument(item.id)
+      if (showTrash) await loadTrash()
+      setConfirmTarget(null)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -202,12 +278,12 @@ export default function SemesterWorkspacePage() {
     <AdminPageHeader
       title="Course Management"
       description="Organize courses by semester, upload materials, and control availability."
-      actions={<Button onClick={() => setMode('semester')}><Plus size={16}/>New semester</Button>}
+      actions={<div className="flex gap-2"><Button variant="secondary" onClick={toggleTrash}><Trash2 size={16}/>{showTrash ? 'Course list' : 'Trash'}</Button>{!showTrash ? <Button onClick={() => setMode('semester')}><Plus size={16}/>New semester</Button> : null}</div>}
     />
     {error && <Message tone="red" text={error} onClose={() => setError('')}/>}
     {notice && <Message text={notice} onClose={() => setNotice('')}/>}
 
-    {loading
+    {showTrash ? <TrashPanel trash={trash} busy={busy} onRestore={restoreTrashItem} onPermanent={(kind, item) => setConfirmTarget({ kind, item, action: 'permanent' })} /> : loading
       ? <Panel className="p-8 text-center"><Loader2 className="mx-auto animate-spin"/></Panel>
       : !semesters.length
         ? <EmptyState
@@ -248,7 +324,7 @@ export default function SemesterWorkspacePage() {
                   />
                   <Button size="sm" variant="secondary" onClick={openEditSemester}><Edit3 size={14}/>Edit</Button>
                   <Button size="sm" variant="secondary" onClick={() => setMode('course')}><Plus size={14}/>Add course</Button>
-                  <Button size="icon" variant="danger" aria-label="Archive semester" onClick={removeSemester}><Trash2 size={15}/></Button>
+                  <Button size="icon" variant="danger" aria-label="Delete semester" onClick={removeSemester}><Trash2 size={15}/></Button>
                 </div>
               </Panel>
 
@@ -288,7 +364,35 @@ export default function SemesterWorkspacePage() {
       onSubmit={submitForm}
       onClose={() => setMode('')}
     />}
+    {confirmTarget ? <ConfirmModal
+      title={confirmTarget.action === 'permanent' ? 'Delete permanently?' : 'Move to trash?'}
+      actionLabel={confirmTarget.action === 'permanent' ? 'Delete permanently' : 'Move to trash'}
+      busy={busy}
+      onCancel={() => setConfirmTarget(null)}
+      onConfirm={executeConfirm}
+    >{confirmTarget.action === 'permanent'
+      ? 'This cannot be undone. Deletion is blocked when chat or benchmark data still depends on this item.'
+      : `${confirmTarget.item?.name || confirmTarget.item?.displayName} will be hidden from chat and RAG immediately.`}</ConfirmModal> : null}
   </div>
+}
+
+function TrashPanel({ trash, busy, onRestore, onPermanent }) {
+  const groups = [
+    ['semester', 'Semesters', trash.semesters],
+    ['course', 'Courses', trash.courses],
+    ['document', 'Documents', trash.documents],
+  ]
+  return <Panel className="p-5">
+    <div className="mb-5"><h2 className="text-xl font-black">Trash</h2><p className="text-sm text-slate-600">Restore items or delete them permanently.</p></div>
+    <div className="space-y-6">{groups.map(([kind, label, items]) => <section key={kind}>
+      <h3 className="mb-2 text-sm font-black uppercase text-slate-500">{label} · {items.length}</h3>
+      {items.length ? <div className="divide-y divide-slate-200 rounded-lg border border-slate-200">{items.map((item) => <div className="flex flex-wrap items-center gap-3 p-3" key={item.id}>
+        <FileText className="text-slate-500" size={17}/><b className="min-w-0 flex-1 truncate text-sm">{item.name || item.displayName}</b>
+        <Button size="sm" variant="secondary" disabled={busy || (kind === 'course' && trash.semesters.some((semester) => semester.id === item.semesterWorkspaceId))} onClick={() => onRestore(kind, item)}><RotateCcw size={14}/>Restore</Button>
+        <Button size="icon" variant="danger" disabled={busy} aria-label={`Delete ${item.name || item.displayName} permanently`} onClick={() => onPermanent(kind, item)}><Trash2 size={15}/></Button>
+      </div>)}</div> : <p className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500">No deleted {label.toLowerCase()}.</p>}
+    </section>)}</div>
+  </Panel>
 }
 
 function CourseList({ courses, documents, uploadingCourseId, togglingCourseId, onManage, onUpload, onToggleActive, onDeleteDocument }) {
@@ -347,7 +451,7 @@ function CourseDetail({ course, documents, uploading, toggling, onBack, onEdit, 
       <div className="flex flex-wrap items-center gap-2">
         <ActivityToggle checked={course.isActive} disabled={toggling} label="Course active" onChange={onToggleActive}/>
         <Button size="sm" variant="secondary" onClick={onEdit}><Edit3 size={14}/>Edit</Button>
-        <Button size="sm" variant="secondary" onClick={onArchive}><Archive size={14}/>Archive</Button>
+        <Button size="sm" variant="danger" onClick={onArchive}><Trash2 size={14}/>Delete</Button>
       </div>
     </div>
     <div className="p-5">

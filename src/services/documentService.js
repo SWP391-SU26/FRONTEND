@@ -16,6 +16,10 @@ export async function getReviewQueue() {
   return unwrapList(await request('/documents/review-queue')).map(toUiDocument)
 }
 
+export async function getDocumentTrash() {
+  return unwrapList(await request('/documents/trash')).map(toUiDocument)
+}
+
 export async function getDocumentsByWorkspace(workspaceId) {
   const documents = unwrapList(
     await request(`/documents/workspace/${workspaceId}${withRequesterQuery()}`),
@@ -71,6 +75,14 @@ export async function uploadDocument({ file, workspaceId, courseId, chapterId, o
     document: await enrichDocumentChunkCount(toUiDocument(document)),
     job: result?.indexingJob ? toUiIndexingJob(result.indexingJob) : null,
   }
+}
+
+export async function restoreDocument(documentId) {
+  return toUiDocument(await request(`/documents/${documentId}/restore`, { method: 'POST' }))
+}
+
+export function permanentlyDeleteDocument(documentId) {
+  return request(`/documents/${documentId}/permanent`, { method: 'DELETE' })
 }
 
 export async function uploadPersonalDocument({ file, onUploadProgress }) {
@@ -186,6 +198,8 @@ export function toUiDocument(document) {
     reviewedBy: document.reviewedBy ?? null,
     reviewedAt: document.reviewedAt ?? null,
     rejectionReason: document.rejectionReason ?? '',
+    deletedAt: document.deletedAt ?? null,
+    deletedBy: document.deletedBy ?? null,
     fileSizeBytes: Number(document.fileSizeBytes ?? 0),
     indexingJobId: document.indexingJobId ?? null,
     fileUrl: document.fileUrl ?? document.cloudinarySecureUrl ?? null,

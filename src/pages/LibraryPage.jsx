@@ -1,16 +1,17 @@
 /* eslint-disable react-hooks/set-state-in-effect -- initial request state is owned by this page */
 import {
   BookOpen, Check, Clock3, Eye, FileText, FolderLock, Loader2, Search,
-  Send, Trash2, Upload, X, XCircle,
+  RotateCcw, Send, Trash2, Upload, X, XCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, ConfirmModal, EmptyState, Field, IconButton, Panel, SelectField, StatusBadge } from '../components/ui.jsx'
 import { getLearningScope } from '../services/courseService.js'
 import {
-  cancelDocumentSubmission, deleteDocument, getDocuments, getMyDocuments,
-  submitDocument, uploadPersonalDocument,
+  cancelDocumentSubmission, getDocuments, getDocumentTrash, getMyDocuments,
+  permanentlyDeleteDocument, restoreDocument, submitDocument,
 } from '../services/documentService.js'
+import { deleteFile, updateFile, uploadPersonalFiles } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024
@@ -20,27 +21,29 @@ export default function LibraryPage() {
   const [tab, setTab] = useState('mine')
   const [mine, setMine] = useState([])
   const [shared, setShared] = useState([])
+  const [trashed, setTrashed] = useState([])
   const [courses, setCourses] = useState([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
   const [submitTarget, setSubmitTarget] = useState(null)
   const [submitCourseId, setSubmitCourseId] = useState('')
   const [busyId, setBusyId] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleteMode, setDeleteMode] = useState('trash')
   const fileInputRef = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [myDocuments, courseDocuments, scope] = await Promise.all([
-        getMyDocuments(), getDocuments(), getLearningScope(),
+      const [myDocuments, courseDocuments, trashDocuments, scope] = await Promise.all([
+        getMyDocuments(), getDocuments(), getDocumentTrash(), getLearningScope(),
       ])
       setMine(myDocuments)
       setShared(courseDocuments.filter((item) => item.documentScope === 'COURSE' && item.reviewStatus === 'APPROVED'))
+      setTrashed(trashDocuments)
       setCourses((Array.isArray(scope) ? scope : []).flatMap((semester) =>
         (semester.courses ?? []).map((course) => ({
           id: course.courseId,
@@ -57,7 +60,7 @@ export default function LibraryPage() {
 
   useEffect(() => { load() }, [load])
 
-  const documents = tab === 'mine' ? mine : shared
+  const documents = tab === 'mine' ? mine : tab === 'course' ? shared : trashed
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase()
     return documents.filter((document) => !value || document.displayName.toLowerCase().includes(value))
@@ -75,19 +78,16 @@ export default function LibraryPage() {
     setUploading(true)
     setError('')
     try {
-      for (let index = 0; index < files.length; index += 1) {
-        const document = await uploadPersonalDocument({
-          file: files[index],
-          onUploadProgress: (progress) => setUploadProgress(Math.round(((index + progress / 100) / files.length) * 100)),
-        })
-        setMine((current) => [document, ...current])
-      }
-      setUploadProgress(100)
-    } catch (requestError) {
-      setError(requestError.message)
+      const tasks = uploadPersonalFiles(files)
+      const results = await Promise.allSettled(tasks.map((task) => task.promise))
+      const uploaded = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value)
+      if (uploaded.length) setMine((current) => [...uploaded.reverse(), ...current])
+      const failed = results.filter((result) => result.status === 'rejected')
+      if (failed.length) setError(`${failed.length} tài liệu tải lên không thành công. Xem chi tiết trong popup tiến trình.`)
     } finally {
       setUploading(false)
-      setUploadProgress(0)
     }
   }
 
@@ -96,7 +96,14 @@ export default function LibraryPage() {
     setBusyId(submitTarget.id)
     setError('')
     try {
-      const updated = await submitDocument(submitTarget.id, submitCourseId)
+      const updated = await updateFile(
+        submitTarget,
+        () => submitDocument(submitTarget.id, submitCourseId),
+        {
+          pendingText: 'Đang gửi tài liệu vào môn học...',
+          completedText: 'Đã gửi tài liệu để duyệt.',
+        },
+      )
       setMine((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
       setSubmitTarget(null)
       setSubmitCourseId('')
@@ -111,7 +118,14 @@ export default function LibraryPage() {
     setBusyId(document.id)
     setError('')
     try {
-      const updated = await cancelDocumentSubmission(document.id)
+      const updated = await updateFile(
+        document,
+        () => cancelDocumentSubmission(document.id),
+        {
+          pendingText: 'Đang hủy yêu cầu gửi tài liệu...',
+          completedText: 'Đã hủy yêu cầu gửi tài liệu.',
+        },
+      )
       setMine((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
     } catch (requestError) {
       setError(requestError.message)
@@ -124,9 +138,29 @@ export default function LibraryPage() {
     if (!deleteTarget) return
     setBusyId(deleteTarget.id)
     try {
-      await deleteDocument(deleteTarget.id)
-      setMine((current) => current.filter((item) => item.id !== deleteTarget.id))
+      if (deleteMode === 'permanent') {
+        await permanentlyDeleteDocument(deleteTarget.id)
+        setTrashed((current) => current.filter((item) => item.id !== deleteTarget.id))
+      } else {
+        await deleteFile(deleteTarget)
+        setMine((current) => current.filter((item) => item.id !== deleteTarget.id))
+        setTrashed((current) => [{ ...deleteTarget, deletedAt: new Date().toISOString() }, ...current])
+      }
       setDeleteTarget(null)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function restore(document) {
+    setBusyId(document.id)
+    setError('')
+    try {
+      const restored = await restoreDocument(document.id)
+      setTrashed((current) => current.filter((item) => item.id !== document.id))
+      setMine((current) => [restored, ...current])
     } catch (requestError) {
       setError(requestError.message)
     } finally {
@@ -144,7 +178,7 @@ export default function LibraryPage() {
         {tab === 'mine' ? (
           <Button disabled={uploading} onClick={() => fileInputRef.current?.click()}>
             {uploading ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />}
-            {uploading ? `Đang tải ${uploadProgress}%` : 'Tải tài liệu lên'}
+            {uploading ? 'Đang tải lên...' : 'Tải tài liệu lên'}
           </Button>
         ) : null}
         <input ref={fileInputRef} className="hidden" type="file" multiple accept=".pdf,.docx,.pptx" onChange={uploadFiles} />
@@ -156,6 +190,7 @@ export default function LibraryPage() {
         <div className="inline-flex w-fit rounded-lg bg-slate-100 p-1" role="tablist">
           <Tab active={tab === 'mine'} icon={FolderLock} onClick={() => setTab('mine')}>Tài liệu của tôi</Tab>
           <Tab active={tab === 'course'} icon={BookOpen} onClick={() => setTab('course')}>Tài liệu môn học</Tab>
+          <Tab active={tab === 'trash'} icon={Trash2} onClick={() => setTab('trash')}>Thùng rác</Tab>
         </div>
         <Field className="w-full sm:max-w-sm" icon={Search} label="Tìm tài liệu" placeholder="Tìm theo tên tài liệu" value={query} onChange={(event) => setQuery(event.target.value)} />
       </div>
@@ -166,15 +201,16 @@ export default function LibraryPage() {
         <Panel className="overflow-hidden p-0">
           <div className="divide-y divide-slate-100">
             {filtered.map((document) => (
-              <DocumentRow key={document.id} document={document} mine={tab === 'mine'} busy={busyId === document.id}
-                onCancel={() => cancelSubmission(document)} onDelete={() => setDeleteTarget(document)}
+              <DocumentRow key={document.id} document={document} mine={tab === 'mine'} trashed={tab === 'trash'} busy={busyId === document.id}
+                onCancel={() => cancelSubmission(document)} onDelete={() => { setDeleteMode(tab === 'trash' ? 'permanent' : 'trash'); setDeleteTarget(document) }}
+                onRestore={() => restore(document)}
                 onSubmit={() => { setSubmitTarget(document); setSubmitCourseId(document.targetCourseId ?? courses[0]?.id ?? '') }} />
             ))}
           </div>
         </Panel>
       ) : (
-        <EmptyState title={tab === 'mine' ? 'Chưa có tài liệu cá nhân' : 'Chưa có tài liệu môn học'}
-          description={tab === 'mine' ? 'Tải lên PDF, DOCX hoặc PPTX để bắt đầu.' : 'Các tài liệu đã được duyệt sẽ xuất hiện tại đây.'} />
+        <EmptyState title={tab === 'mine' ? 'Chưa có tài liệu cá nhân' : tab === 'course' ? 'Chưa có tài liệu môn học' : 'Thùng rác trống'}
+          description={tab === 'mine' ? 'Tải lên PDF, DOCX hoặc PPTX để bắt đầu.' : tab === 'course' ? 'Các tài liệu đã được duyệt sẽ xuất hiện tại đây.' : 'Tài liệu đã xóa sẽ xuất hiện tại đây.'} />
       )}
 
       {submitTarget ? (
@@ -191,7 +227,7 @@ export default function LibraryPage() {
         </div>
       ) : null}
 
-      {deleteTarget ? <ConfirmModal title="Xóa tài liệu?" actionLabel="Xóa" busy={busyId === deleteTarget.id} onCancel={() => setDeleteTarget(null)} onConfirm={removeDocument}>“{deleteTarget.displayName}” sẽ bị xóa khỏi kho cá nhân.</ConfirmModal> : null}
+      {deleteTarget ? <ConfirmModal title={deleteMode === 'permanent' ? 'Xóa vĩnh viễn?' : 'Chuyển vào thùng rác?'} actionLabel={deleteMode === 'permanent' ? 'Xóa vĩnh viễn' : 'Chuyển vào thùng rác'} busy={busyId === deleteTarget.id} onCancel={() => setDeleteTarget(null)} onConfirm={removeDocument}>{deleteMode === 'permanent' ? 'Không thể hoàn tác. Hệ thống sẽ chặn nếu chat hoặc benchmark còn phụ thuộc.' : deleteTarget.documentScope === 'COURSE' ? 'Tài liệu đang chia sẻ sẽ bị thu hồi khỏi môn học và có thể làm môn học chuyển sang Inactive.' : `“${deleteTarget.displayName}” sẽ bị ẩn khỏi chat và RAG.`}</ConfirmModal> : null}
     </main>
   )
 }
@@ -200,7 +236,7 @@ function Tab({ active, children, icon: Icon, onClick }) {
   return <button type="button" role="tab" aria-selected={active} onClick={onClick} className={cn('flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-bold', active ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-800')}><Icon size={15} />{children}</button>
 }
 
-function DocumentRow({ document, mine, busy, onCancel, onDelete, onSubmit }) {
+function DocumentRow({ document, mine, trashed, busy, onCancel, onDelete, onRestore, onSubmit }) {
   const review = reviewMeta(document)
   return (
     <article className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center">
@@ -211,10 +247,11 @@ function DocumentRow({ document, mine, busy, onCancel, onDelete, onSubmit }) {
         {document.rejectionReason ? <p className="mt-2 text-sm font-semibold text-red-700">{document.rejectionReason}</p> : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Link to={`/library/documents/${document.id}`}><IconButton label="Xem tài liệu"><Eye size={16} /></IconButton></Link>
+        {!trashed ? <Link to={`/library/documents/${document.id}`}><IconButton label="Xem tài liệu"><Eye size={16} /></IconButton></Link> : null}
         {mine && document.status === 'Processed' && ['NOT_SUBMITTED', 'REJECTED'].includes(document.reviewStatus) ? <Button size="sm" variant="secondary" onClick={onSubmit}><Send size={15} />Gửi vào môn học</Button> : null}
         {mine && document.reviewStatus === 'PENDING' ? <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}><X size={15} />Hủy yêu cầu</Button> : null}
         {mine && document.canDelete ? <IconButton label="Xóa" disabled={busy} onClick={onDelete}><Trash2 size={16} /></IconButton> : null}
+        {trashed ? <><Button size="sm" variant="secondary" disabled={busy} onClick={onRestore}><RotateCcw size={15} />Khôi phục</Button><IconButton label="Xóa vĩnh viễn" disabled={busy} onClick={onDelete}><Trash2 size={16} /></IconButton></> : null}
       </div>
     </article>
   )
