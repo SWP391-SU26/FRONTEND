@@ -10,20 +10,22 @@ import MainLayout from './layouts/MainLayout.jsx'
 import {
   AdminDashboardPage,
   AdminDocumentsPage,
-  AdminResearchDashboardPage,
   AdminUsersPage,
 } from './pages/admin/AdminPages.jsx'
+import { AdminResearchDashboardPage } from './pages/admin/AdminResearchDashboardPage.jsx'
 import { AdminTestSetPage } from './pages/admin/AdminTestSetPage.jsx'
 import DocumentDetailPage from './pages/DocumentDetailPage.jsx'
 import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import WorkspacePage from './pages/WorkspacePage.jsx'
-import CourseManagementPage from './pages/admin/CourseManagementPage.jsx'
+import SemesterWorkspacePage from './pages/admin/SemesterWorkspacePage.jsx'
 import { UploadProgressPopup } from './components/UploadProgressPopup.jsx'
 import {
   getDefaultRouteForUser,
   getSavedUser,
+  hasRole,
   isAdminSession,
+  isResearcherSession,
   isAuthenticated,
 } from './services/authService.js'
 
@@ -47,13 +49,13 @@ function App() {
       <Route element={<PublicOnly><ResetPasswordPage /></PublicOnly>} path="/reset-password" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/settings" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/profile" />
-      <Route element={<RequireAdmin><AdminLayout /></RequireAdmin>} path="/admin">
-        <Route index element={<Navigate replace to="/admin/dashboard" />} />
-        <Route path="dashboard" element={<AdminDashboardPage />} />
-        <Route path="users" element={<AdminUsersPage />} />
-        <Route path="documents" element={<AdminDocumentsPage />} />
-        <Route path="courses" element={<CourseManagementPage />} />
-        <Route path="subjects" element={<Navigate replace to="/admin/courses" />} />
+      <Route element={<RequireFlow5Role><AdminLayout /></RequireFlow5Role>} path="/admin">
+        <Route index element={<AdminIndex />} />
+        <Route path="dashboard" element={<RequireAdmin><AdminDashboardPage /></RequireAdmin>} />
+        <Route path="users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />
+        <Route path="documents" element={<RequireAdmin><AdminDocumentsPage /></RequireAdmin>} />
+        <Route path="courses" element={<RequireAdmin><SemesterWorkspacePage /></RequireAdmin>} />
+        <Route path="subjects" element={<RequireAdmin><Navigate replace to="/admin/courses" /></RequireAdmin>} />
         <Route path="test-set" element={<AdminTestSetPage />} />
         <Route path="research-dashboard" element={<AdminResearchDashboardPage />} />
         {/* Redirects: old standalone pages → unified Research Dashboard */}
@@ -124,6 +126,16 @@ function RequireAdmin({ children }) {
   }
 
   return children
+}
+
+function RequireFlow5Role({ children }) {
+  if (!isAuthenticated()) return <Navigate replace to="/login" />
+  if (!isAdminSession() && !isResearcherSession()) return <Navigate replace to="/workspace" />
+  return children
+}
+
+function AdminIndex() {
+  return <Navigate replace to={hasRole(getSavedUser(), 'ADMIN') ? '/admin/dashboard' : '/admin/test-set'} />
 }
 
 export default App

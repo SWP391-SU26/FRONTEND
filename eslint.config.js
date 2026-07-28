@@ -4,7 +4,7 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import globals from 'globals'
 
 export default [
-  { ignores: ['dist'] },
+  { ignores: ['dist', 'src/pages/admin/AdminPages_nam.jsx'] },
   js.configs.recommended,
   {
     files: ['**/*.{js,jsx}'],

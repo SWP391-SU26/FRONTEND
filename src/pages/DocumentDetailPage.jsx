@@ -18,13 +18,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { BentoCard, Button, ConfirmModal, EmptyState, Field, Panel, StatusBadge } from '../components/ui.jsx'
 import {
-  deleteDocument,
   getDocument,
   getDocumentChunks,
   getDocumentFileUrl,
   getDocumentPages,
   getDocumentPreviewUrl,
 } from '../services/documentService.js'
+import { deleteFile } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
 
 function DocumentDetailPage() {
@@ -168,7 +168,7 @@ function DocumentDetailPage() {
     }
     setDeleting(true)
     try {
-      await deleteDocument(id)
+      await deleteFile(doc)
       navigate('/library')
     } catch (err) {
       setError(err.message)

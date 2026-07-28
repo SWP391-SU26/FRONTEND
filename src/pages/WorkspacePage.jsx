@@ -1,821 +1,859 @@
+/* eslint-disable react-hooks/set-state-in-effect -- request-bound resets prevent stale course/session data */
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle,
+  AlertCircle,
+  BookOpen,
   Bot,
-  BookOpenCheck,
   Check,
+  ChevronRight,
   Clipboard,
-  Clock,
+  ExternalLink,
   FileText,
+  Files,
+  FolderLock,
+  History,
+  Library,
   Loader2,
+  Menu,
   MessageSquare,
   NotebookPen,
+  PanelRight,
   Plus,
-  RefreshCcw,
   Save,
   Send,
   Trash2,
-  UserRound,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, IconButton, Panel, StatusBadge } from '../components/ui.jsx'
-import { getSavedUser } from '../services/authService.js'
-import {
-  clearLocalConversations,
-  createLocalConversation,
-  getLocalConversations,
-  removeLocalConversation,
-  saveLocalConversation,
-} from '../services/chatHistoryStore.js'
+import { useNavigate } from 'react-router-dom'
+import { Button, IconButton, StatusBadge } from '../components/ui.jsx'
 import {
   askQuestion,
   createSession,
+  deleteSession,
   getMessages,
   getNotes,
+  getSessions,
   saveNote,
 } from '../services/chatService.js'
-import { getWorkspaces } from '../services/courseService.js'
-import { getDocumentsByWorkspace } from '../services/documentService.js'
+import { getCourseMaterials, getLearningScope } from '../services/courseService.js'
+import { getMyDocuments } from '../services/documentService.js'
 import { cn } from '../utils/cn.js'
 
-const suggestions = [
-  'Tóm tắt các ý chính trong workspace này',
-  'Giải thích khái niệm quan trọng nhất và kèm nguồn',
-  'Tạo 5 câu hỏi ôn tập từ tài liệu',
-]
+const EMPTY_MATERIALS = { chapters: [], unclassifiedMaterials: [] }
 
-function WorkspacePage() {
-  const user = getSavedUser()
-  const [workspaces, setWorkspaces] = useState([])
-  const [activeWorkspace, setActiveWorkspace] = useState('')
-  const [documents, setDocuments] = useState([])
+export default function WorkspacePage() {
+  const navigate = useNavigate()
+  const [semesters, setSemesters] = useState([])
+  const [semesterId, setSemesterId] = useState('')
+  const [courseId, setCourseId] = useState('')
+  const [scopeType, setScopeType] = useState('COURSE')
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([])
+  const [personalDocuments, setPersonalDocuments] = useState([])
+  const [sessions, setSessions] = useState([])
   const [session, setSession] = useState(null)
   const [messages, setMessages] = useState([])
+  const [materials, setMaterials] = useState(EMPTY_MATERIALS)
   const [notes, setNotes] = useState([])
-  const [input, setInput] = useState('')
+  const [sidebarTab, setSidebarTab] = useState('history')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [drawerMode, setDrawerMode] = useState(null)
   const [activeCitation, setActiveCitation] = useState(null)
-  const [loading, setLoading] = useState(Boolean(user?.id))
-  const [isAnswering, setIsAnswering] = useState(false)
-  const [error, setError] = useState(user?.id ? '' : 'Sign in with a backend account before opening a chat workspace.')
-  const [copiedId, setCopiedId] = useState('')
   const [noteDraft, setNoteDraft] = useState(null)
+  const [input, setInput] = useState('')
+  const [chatMode, setChatMode] = useState('rag')
+  const [loadingScope, setLoadingScope] = useState(true)
+  const [loadingCourse, setLoadingCourse] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [answering, setAnswering] = useState(false)
   const [savingNote, setSavingNote] = useState(false)
-  const [reloadKey, setReloadKey] = useState(0)
-
-  // ─── History panel state ────────────────────────────────────────
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [conversations, setConversations] = useState([])
-  const [activeConvId, setActiveConvId] = useState(null)
-  const [clearConfirm, setClearConfirm] = useState(false)
+  const [deletingId, setDeletingId] = useState('')
+  const [copiedId, setCopiedId] = useState('')
+  const [error, setError] = useState('')
   const messagesEndRef = useRef(null)
+  const courseRequestRef = useRef(0)
+  const messageRequestRef = useRef(0)
 
-  // ─── Load workspaces ────────────────────────────────────────────
-  useEffect(() => {
-    let active = true
-    if (!user?.id) return undefined
-    getWorkspaces()
-      .then((items) => {
-        if (!active) return
-        setWorkspaces(items)
-        setActiveWorkspace((current) => current || items[0]?.id || '')
-        if (!items.length) setLoading(false)
-      })
-      .catch((err) => {
-        if (active) { setError(err.message); setLoading(false) }
-      })
-    return () => { active = false }
-  }, [user?.id])
+  const semester = useMemo(
+    () => semesters.find((item) => String(item.semesterId) === String(semesterId)) ?? null,
+    [semesters, semesterId],
+  )
+  const courses = useMemo(() => semester?.courses ?? [], [semester])
+  const course = useMemo(
+    () => courses.find((item) => String(item.courseId) === String(courseId)) ?? null,
+    [courses, courseId],
+  )
+  const courseWorkspaceId = course?.workspaceId ?? ''
+  const scopeValid = scopeType === 'PERSONAL'
+    ? selectedDocumentIds.length > 0
+    : scopeType === 'SEMESTER'
+    ? Boolean(semester?.courses?.some((item) => item.processedDocumentCount > 0))
+    : scopeType === 'DOCUMENTS'
+      ? Boolean(course && selectedDocumentIds.length)
+      : Boolean(course?.processedDocumentCount)
+  const activeScopeLabel = session?.scopeLabel || buildScopeLabel(scopeType, semester, course, selectedDocumentIds.length)
 
-  // ─── Load workspace data + session + backend history ───────────
   useEffect(() => {
-    if (!activeWorkspace || !user?.id) return undefined
-    let active = true
+    let mounted = true
+    setLoadingScope(true)
+    Promise.all([getLearningScope(), getMyDocuments()])
+      .then(([items, myDocuments]) => {
+        if (!mounted) return
+        const next = Array.isArray(items) ? items : []
+        setSemesters(next)
+        const firstSemester = next[0]
+        setSemesterId(firstSemester?.semesterId ?? '')
+        setCourseId(firstSemester?.courses?.[0]?.courseId ?? '')
+        setPersonalDocuments((myDocuments ?? []).filter((document) => document.status === 'Processed'))
+      })
+      .catch((requestError) => mounted && setError(readError(requestError, 'Không thể tải phạm vi học tập.')))
+      .finally(() => mounted && setLoadingScope(false))
+    return () => { mounted = false }
+  }, [])
+
+  useEffect(() => {
+    if (scopeType !== 'PERSONAL' && !semesterId) {
+      setSessions([])
+      return undefined
+    }
+
+    let mounted = true
+    getSessions(scopeType === 'PERSONAL' ? { scopeType: 'PERSONAL' } : { semesterId })
+      .then((items) => mounted && setSessions(items))
+      .catch((requestError) => mounted && setError(readError(requestError, 'Không thể tải lịch sử trò chuyện.')))
+    return () => { mounted = false }
+  }, [scopeType, semesterId])
+
+  useEffect(() => {
+    if (scopeType === 'PERSONAL') {
+      setMaterials(EMPTY_MATERIALS)
+      const workspaceId = session?.workspaceId || personalDocuments.find((document) => selectedDocumentIds.includes(document.id))?.workspaceId
+      if (!workspaceId) {
+        setNotes([])
+        return undefined
+      }
+      let mounted = true
+      getNotes(workspaceId).then((items) => mounted && setNotes(Array.isArray(items) ? items : [])).catch(() => mounted && setNotes([]))
+      return () => { mounted = false }
+    }
+    if (!courseId || !courseWorkspaceId) {
+      setMaterials(EMPTY_MATERIALS)
+      setNotes([])
+      return undefined
+    }
+
+    const requestId = ++courseRequestRef.current
+    setLoadingCourse(true)
+    setError('')
 
     Promise.all([
-      getDocumentsByWorkspace(activeWorkspace),
-      getNotes(activeWorkspace),
-      createSession(activeWorkspace),
+      getCourseMaterials(courseId),
+      courseWorkspaceId ? getNotes(courseWorkspaceId) : Promise.resolve([]),
     ])
-      .then(async ([nextDocuments, nextNotes, nextSession]) => {
-        const history = await getMessages(nextSession.id)
-        if (!active) return
-        let localConversations = getLocalConversations(user.id, activeWorkspace)
-        if (!localConversations.length) {
-          const initialConversation = createLocalConversation({
-            userId: user.id,
-            workspaceId: activeWorkspace,
-            backendSessionId: nextSession.id,
-            messages: history,
-          })
-          localConversations = [initialConversation]
-        }
-        const activeConversation = localConversations[0]
-        setDocuments(nextDocuments)
-        setNotes(nextNotes)
-        setSession(nextSession)
-        setConversations(localConversations)
-        setActiveConvId(activeConversation.id)
-        setMessages(activeConversation.messages ?? [])
+      .then(([nextMaterials, nextNotes]) => {
+        if (requestId !== courseRequestRef.current) return
+        setMaterials(nextMaterials ?? EMPTY_MATERIALS)
+        setNotes(Array.isArray(nextNotes) ? nextNotes : [])
       })
-      .catch((err) => active && setError(err.message))
-      .finally(() => active && setLoading(false))
+      .catch((requestError) => {
+        if (requestId === courseRequestRef.current) setError(readError(requestError, 'Không thể tải dữ liệu môn học.'))
+      })
+      .finally(() => {
+        if (requestId === courseRequestRef.current) setLoadingCourse(false)
+      })
+  }, [courseId, courseWorkspaceId, scopeType, session?.workspaceId, personalDocuments, selectedDocumentIds])
 
-    return () => { active = false }
-  }, [activeWorkspace, reloadKey, user?.id])
-
-  // ─── Load local history when workspace changes ──────────────────
-  // ─── Scroll to bottom on new messages ──────────────────────────
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const activeWorkspaceData = workspaces.find((item) => item.id === activeWorkspace)
-  const indexedDocuments = useMemo(
-    () => documents.filter((document) => ['Indexed', 'Processed'].includes(document.status)),
-    [documents],
-  )
-  const canChat = Boolean(session && indexedDocuments.length && !isAnswering)
-
-  // ─── Messages to display: either live session or a historical conversation ──
-  const displayMessages = messages
-
-  // ─── Submit question ───────────────────────────────────────────
-  async function handleSubmit(event) {
-    event.preventDefault()
-    const question = input.trim()
-    if (!question || !session) return
-    if (!indexedDocuments.length) {
-      setError('This workspace has no processed document available for RAG.')
-      return
+    if (!session?.id) {
+      setMessages([])
+      return undefined
     }
+    const requestId = ++messageRequestRef.current
+    setLoadingMessages(true)
+    getMessages(session.id)
+      .then((items) => {
+        if (requestId === messageRequestRef.current) setMessages(items)
+      })
+      .catch((requestError) => {
+        if (requestId === messageRequestRef.current) setError(readError(requestError, 'Không thể tải cuộc trò chuyện.'))
+      })
+      .finally(() => {
+        if (requestId === messageRequestRef.current) setLoadingMessages(false)
+      })
+  }, [session?.id])
 
-    const optimisticId = `pending-${globalThis.crypto.randomUUID()}`
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, answering])
+
+  function changeSemester(nextSemesterId) {
+    const nextSemester = semesters.find((item) => String(item.semesterId) === String(nextSemesterId))
+    setSemesterId(nextSemesterId)
+    setCourseId(nextSemester?.courses?.[0]?.courseId ?? '')
+    setScopeType('COURSE')
+    setSelectedDocumentIds([])
+    setSession(null)
+    setMessages([])
+  }
+
+  function changeCourse(nextCourseId) {
+    setCourseId(nextCourseId)
+    setSelectedDocumentIds([])
+  }
+
+  function changeScope(nextScopeType) {
+    if (session) return
+    setScopeType(nextScopeType)
+    setSelectedDocumentIds([])
+    if (['DOCUMENTS', 'PERSONAL'].includes(nextScopeType)) setSidebarTab('materials')
+  }
+
+  function toggleDocument(documentId) {
+    if (session || !['DOCUMENTS', 'PERSONAL'].includes(scopeType)) return
+    setSelectedDocumentIds((current) => current.includes(documentId)
+      ? current.filter((id) => id !== documentId)
+      : [...current, documentId])
+  }
+
+  function startNewChat() {
+    setSession(null)
+    setMessages([])
+    setScopeType('COURSE')
+    setSelectedDocumentIds([])
+    setInput('')
+    setActiveCitation(null)
+    setDrawerMode(null)
+  }
+
+  async function selectSession(nextSession) {
+    setSidebarOpen(false)
+    setActiveCitation(null)
+    setDrawerMode(null)
+    setScopeType(nextSession.scopeType ?? 'COURSE')
+    setSelectedDocumentIds(nextSession.documentIds ?? [])
+    if (nextSession.courseId) setCourseId(nextSession.courseId)
+    setSession(nextSession)
+  }
+
+  async function removeSession(event, item) {
+    event.stopPropagation()
+    if (deletingId) return
+    setDeletingId(item.id)
+    setError('')
+    try {
+      await deleteSession(item.id)
+      const nextSessions = sessions.filter((candidate) => candidate.id !== item.id)
+      setSessions(nextSessions)
+      if (session?.id === item.id) {
+        if (nextSessions[0]) {
+          await selectSession(nextSessions[0])
+        } else {
+          startNewChat()
+        }
+      }
+    } catch (requestError) {
+      setError(readError(requestError, 'Không thể xóa cuộc trò chuyện.'))
+    } finally {
+      setDeletingId('')
+    }
+  }
+
+  async function submit(event) {
+    event?.preventDefault()
+    const question = input.trim()
+    if (!question || !scopeValid || answering) return
+
     setInput('')
     setError('')
-    setIsAnswering(true)
-    const optimisticMessages = [...messages, { id: optimisticId, role: 'user', content: question }]
-    setMessages(optimisticMessages)
-    persistConversationMessages(activeConvId, optimisticMessages)
+    setAnswering(true)
+    const optimisticUser = { id: `pending-${Date.now()}`, role: 'user', content: question, citations: [] }
+    setMessages((current) => [...current, optimisticUser])
+
     try {
-      const response = await askQuestion(session.chatSessionId, question)
-      const answer = {
-        id: response.assistantMessageId,
-        role: 'assistant',
-        content: response.answer,
-        citations: response.citations ?? [],
+      let activeSession = session
+      if (!activeSession) {
+        activeSession = await createSession({
+          scopeType,
+          semesterId: scopeType === 'PERSONAL' ? null : semesterId,
+          courseId: ['SEMESTER', 'PERSONAL'].includes(scopeType) ? null : course?.courseId,
+          documentIds: ['DOCUMENTS', 'PERSONAL'].includes(scopeType) ? selectedDocumentIds : [],
+        })
+        setSessions((current) => [activeSession, ...current])
       }
-      const completedMessages = [...optimisticMessages, answer]
-      setMessages(completedMessages)
-      setActiveCitation(answer.citations[0] ?? null)
-      persistConversationMessages(activeConvId, completedMessages)
+      const answer = await askQuestion(activeSession.id, question, { mode: chatMode })
+      setMessages((current) => [
+        ...current,
+        {
+          id: answer.assistantMessageId ?? `answer-${Date.now()}`,
+          role: 'assistant',
+          content: answer.answer ?? '',
+          citations: answer.citations ?? [],
+          generationMode: answer.generationMode,
+        },
+      ])
+      const refreshed = await getSessions(scopeType === 'PERSONAL' ? { scopeType: 'PERSONAL' } : { semesterId })
+      setSessions(refreshed)
+      const refreshedActive = refreshed.find((item) => item.id === activeSession.id)
+      setSession(refreshedActive ?? activeSession)
     } catch (requestError) {
-      setMessages(messages)
-      persistConversationMessages(activeConvId, messages)
+      setMessages((current) => current.filter((message) => message.id !== optimisticUser.id))
       setInput(question)
-      setError(`${requestError.message} Your question is ready to retry.`)
+      setError(readError(requestError, 'AI chưa phản hồi. Bạn có thể thử gửi lại.'))
     } finally {
-      setIsAnswering(false)
+      setAnswering(false)
     }
   }
 
-  function copyAnswer(message) {
-    navigator.clipboard?.writeText(message.content)
+  async function copyMessage(message) {
+    await navigator.clipboard.writeText(message.content)
     setCopiedId(message.id)
-    window.setTimeout(() => setCopiedId(''), 1200)
+    window.setTimeout(() => setCopiedId(''), 1600)
   }
 
-  function openNote(message) {
+  function prepareNote(message) {
     setNoteDraft({
-      title: `Chat note - ${activeWorkspaceData?.name || 'Workspace'}`,
-      content: message.content,
+      noteTitle: session?.title && session.title !== 'New conversation' ? session.title : 'Ghi chú từ AI',
+      noteContent: message.content,
     })
+    setDrawerMode('notes')
   }
 
-  async function handleSaveNote(event) {
+  async function submitNote(event) {
     event.preventDefault()
+    const workspaceId = session?.workspaceId || (scopeType === 'PERSONAL'
+      ? personalDocuments.find((document) => selectedDocumentIds.includes(document.id))?.workspaceId
+      : course?.workspaceId)
+    if (!noteDraft || !workspaceId || savingNote) return
     setSavingNote(true)
-    setError('')
     try {
-      const created = await saveNote({
-        workspaceId: activeWorkspace,
-        noteTitle: noteDraft.title.trim(),
-        noteContent: noteDraft.content.trim(),
-      })
-      setNotes((current) => [created, ...current])
+      const saved = await saveNote({ workspaceId, ...noteDraft })
+      setNotes((current) => [saved, ...current])
       setNoteDraft(null)
     } catch (requestError) {
-      setError(requestError.message)
+      setError(readError(requestError, 'Không thể lưu ghi chú.'))
     } finally {
       setSavingNote(false)
     }
   }
 
-  async function handleDeleteConversation(convId) {
-    const updated = removeLocalConversation(user.id, activeWorkspace, convId)
-    setConversations(updated)
-    if (activeConvId === convId) {
-      if (updated.length) {
-        setActiveConvId(updated[0].id)
-        setMessages(updated[0].messages ?? [])
-      } else {
-        handleNewChat()
-      }
-    }
+  if (loadingScope) {
+    return <CenteredState icon={Loader2} title="Đang tải không gian học tập" spin />
   }
 
-  function handleClearHistory() {
-    clearLocalConversations(user.id, activeWorkspace)
-    setConversations([])
-    setClearConfirm(false)
-    handleNewChat()
-  }
-
-  function handleSelectConversation(convId) {
-    const selected = conversations.find((item) => item.id === convId)
-    if (!selected) {
-      setHistoryOpen(false)
-      return
-    }
-    setActiveConvId(selected.id)
-    setMessages(selected.messages ?? [])
-    setActiveCitation(null)
-    setHistoryOpen(false)
-  }
-
-  function handleNewChat() {
-    if (!activeWorkspace || !session) return
-    setError('')
-    const created = createLocalConversation({
-      userId: user.id,
-      workspaceId: activeWorkspace,
-      backendSessionId: session.chatSessionId,
-    })
-    setConversations(getLocalConversations(user.id, activeWorkspace))
-    setActiveConvId(created.id)
-    setMessages([])
-    setInput('')
-    setActiveCitation(null)
-  }
-
-  function persistConversationMessages(conversationId, nextMessages) {
-    if (!conversationId) return
-    const current = conversations.find((item) => item.id === conversationId)
-    if (!current) return
-    const updated = {
-      ...current,
-      messages: nextMessages,
-      updatedAt: new Date().toISOString(),
-    }
-    const nextConversations = saveLocalConversation(user.id, activeWorkspace, updated)
-    setConversations(nextConversations)
+  if (!semesters.length) {
+    return <CenteredState icon={BookOpen} title="Chưa có môn học khả dụng" description="Các môn đã được phân quyền sẽ xuất hiện tại đây." />
   }
 
   return (
-    <div className="workspace-fixed-page flex min-h-0 flex-col gap-4">
-      <Panel className="workspace-hero-panel shrink-0 overflow-hidden p-5">
-        <div className="pointer-events-none absolute inset-0 opacity-55"><div className="abstract-canvas" /></div>
-        <div className="relative flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-xs font-black uppercase text-teal-700">Source-grounded study</p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950 sm:text-4xl">AI Chat Workspace</h1>
-            <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
-              Ask questions from processed course documents and keep useful answers as learning notes.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={() => setHistoryOpen(true)} variant="secondary">
-              <Clock size={16} /> Lịch sử
-              {conversations.length > 0 && (
-                <span className="ml-1 rounded-full bg-teal-600 px-1.5 py-0.5 text-[10px] font-black text-white">
-                  {conversations.length}
-                </span>
-              )}
-            </Button>
-            <Button
-              onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setReloadKey((value) => value + 1) }}
-              variant="secondary"
-            >
-              <RefreshCcw size={16} />Refresh
-            </Button>
-          </div>
-        </div>
-      </Panel>
+    <div className="workspace-fixed-page relative min-h-0 px-3 pb-3 sm:px-5">
+      <div className="grid h-full min-h-0 overflow-hidden rounded-[24px] border border-white/80 bg-white/70 shadow-[0_24px_70px_rgba(15,118,110,.12)] backdrop-blur-2xl lg:grid-cols-[288px_minmax(0,1fr)]">
+        <Sidebar
+          activeSessionId={session?.id}
+          deletingId={deletingId}
+          materials={materials}
+          personalDocuments={personalDocuments}
+          courses={courses}
+          scopeType={scopeType}
+          selectedDocumentIds={selectedDocumentIds}
+          navigate={navigate}
+          onClose={() => setSidebarOpen(false)}
+          onDelete={removeSession}
+          onSelectSession={selectSession}
+          onToggleDocument={toggleDocument}
+          open={sidebarOpen}
+          sessions={sessions}
+          setTab={setSidebarTab}
+          tab={sidebarTab}
+        />
 
-      {error ? <ErrorBanner message={error} /> : null}
-
-      <div className="workspace-chat-grid grid min-h-0 flex-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
-        {/* Left panel: workspaces + documents */}
-        <Panel className="min-h-0 overflow-y-auto p-4 [scrollbar-color:theme(colors.teal.300)_transparent] [scrollbar-width:thin]">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-black">Workspaces</h2>
-            <BookOpenCheck className="text-primary" size={18} />
-          </div>
-          <div className="mt-4 space-y-2">
-            {workspaces.map((workspace) => (
-              <button
-                className={cn(
-                  'w-full rounded-lg border p-3 text-left transition',
-                  workspace.id === activeWorkspace
-                    ? 'border-teal-300 bg-teal-50'
-                    : 'border-slate-200 bg-white/80 hover:border-teal-200',
-                )}
-                key={workspace.id}
-                onClick={() => { setLoading(true); setError(''); setActiveCitation(null); setActiveWorkspace(workspace.id) }}
-                type="button"
-              >
-                <p className="truncate text-sm font-black">{workspace.name}</p>
-                <p className="mt-1 text-xs font-semibold text-slate-500">{workspace.visibility}</p>
-              </button>
-            ))}
-            {!workspaces.length && !loading ? <p className="text-sm font-semibold text-slate-500">No workspace is available.</p> : null}
-          </div>
-
-          <div className="mt-6 border-t border-slate-200 pt-4">
-            <p className="text-xs font-black uppercase text-slate-500">Documents</p>
-            <div className="mt-3 space-y-2">
-              {documents.map((document, index) => (
-                <div className="rounded-lg bg-white/80 p-3" key={document.id || `doc-${index}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="line-clamp-2 text-xs font-black">{document.displayName}</p>
-                    <StatusBadge status={document.status} />
-                  </div>
+        <main className="flex min-h-0 min-w-0 flex-col bg-white/65">
+          <header className="flex flex-col gap-3 border-b border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur-xl xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <IconButton className="lg:hidden" label="Mở thanh bên" onClick={() => setSidebarOpen(true)}>
+                <Menu size={19} />
+              </IconButton>
+              <ScopeModeControl disabled={Boolean(session)} onChange={changeScope} value={scopeType} />
+              {scopeType !== 'PERSONAL' ? <ScopeSelect disabled={Boolean(session)} label="Học kỳ" value={semesterId} onChange={(event) => changeSemester(event.target.value)}>
+                {semesters.map((item) => <option key={item.semesterId} value={item.semesterId}>{item.semesterName}</option>)}
+              </ScopeSelect> : null}
+              {!['SEMESTER', 'PERSONAL'].includes(scopeType) ? <ChevronRight className="hidden shrink-0 text-slate-300 sm:block" size={18} /> : null}
+              {!['SEMESTER', 'PERSONAL'].includes(scopeType) ? (
+                <ScopeSelect disabled={Boolean(session)} label="Môn học" value={courseId} onChange={(event) => changeCourse(event.target.value)}>
+                  {courses.map((item) => <option key={item.courseId} value={item.courseId}>{item.courseCode} · {item.courseName}</option>)}
+                </ScopeSelect>
+              ) : null}
+              {!['SEMESTER', 'PERSONAL'].includes(scopeType) && course ? (
+                <div className="hidden shrink-0 items-center gap-2 2xl:flex">
+                  <StatusBadge status={titleCase(course.status)} />
+                  <span className="text-xs font-bold text-slate-500">{course.processedDocumentCount} tài liệu đã xử lý</span>
                 </div>
-              ))}
-              {!documents.length && !loading ? <p className="text-xs font-semibold text-slate-500">No documents in this workspace.</p> : null}
-            </div>
-          </div>
-        </Panel>
-
-        {/* Center panel: chat */}
-        <Panel className="flex min-h-0 flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-200 p-4">
-            <div>
-              <p className="text-xs font-black uppercase text-slate-500">Active session</p>
-              <h2 className="mt-1 text-base font-black">
-                {conversations.find((item) => item.id === activeConvId)?.title || activeWorkspaceData?.name || 'Select a workspace'}
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-black text-teal-700 transition hover:bg-teal-100"
-                onClick={handleNewChat}
-                type="button"
-              >
-                <Plus size={13} /> New chat
-              </button>
-              {session ? (
-                <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">Connected</span>
               ) : null}
             </div>
-          </div>
-
-          {/* Messages */}
-          <div className="flex-1 space-y-4 overflow-y-auto scroll-smooth p-4 pb-6 [scrollbar-color:theme(colors.teal.300)_transparent] [scrollbar-width:thin]">
-            {loading ? <LoadingSpinner /> : displayMessages.length ? displayMessages.map((message, index) => (
-              <Message
-                copied={copiedId === message.id}
-                key={message.id || `msg-${index}`}
-                message={message}
-                onCitation={setActiveCitation}
-                onCopy={() => copyAnswer(message)}
-                onSaveNote={() => openNote(message)}
-              />
-            )) : (
-              <div className="grid min-h-72 place-items-center text-center">
-                <div>
-                  <div className="mx-auto grid size-12 place-items-center rounded-xl bg-teal-50 text-primary"><Bot size={22} /></div>
-                  <h3 className="mt-4 text-lg font-black">Start a grounded conversation</h3>
-                  <p className="mt-2 max-w-md text-sm font-semibold leading-6 text-slate-500">
-                    Choose a prompt or ask a question about processed documents in this workspace.
-                  </p>
-                </div>
-              </div>
-            )}
-            {isAnswering ? (
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
-                <Loader2 className="animate-spin text-primary" size={17} />Đang tạo câu trả lời dựa trên tài liệu...
-              </div>
-            ) : null}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input */}
-          <div className="border-t border-slate-200 bg-white/70 p-4">
-            <div className="mb-3 flex flex-wrap gap-2">
-              {suggestions.map((suggestion) => (
-                <button
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-bold text-slate-600 hover:border-teal-300"
-                  key={suggestion}
-                  onClick={() => setInput(suggestion)}
-                  type="button"
-                >
-                  {suggestion}
-                </button>
-              ))}
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 self-stretch xl:self-auto">
+              <Button aria-label="Chat mới" size="sm" variant="secondary" onClick={startNewChat}><Plus size={16} /><span className="hidden sm:inline">Chat mới</span></Button>
+              <Button aria-label="Nguồn" size="sm" variant="ghost" onClick={() => setDrawerMode('sources')}><PanelRight size={16} /><span className="hidden sm:inline">Nguồn</span></Button>
+              <Button aria-label="Ghi chú" disabled={scopeType === 'SEMESTER'} size="sm" variant="ghost" onClick={() => setDrawerMode('notes')}><NotebookPen size={16} /><span className="hidden sm:inline">Ghi chú</span></Button>
             </div>
-            <form className="flex gap-2" onSubmit={handleSubmit}>
-              <textarea
-                aria-label="Question"
-                className="min-h-12 flex-1 resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100 disabled:opacity-50"
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    event.currentTarget.form?.requestSubmit()
-                  }
-                }}
-                placeholder={
-                  indexedDocuments.length
-                    ? 'Hỏi bằng tiếng Việt từ các tài liệu đã index...'
-                    : 'Workspace này cần ít nhất một tài liệu đã index'
-                }
-                value={input}
-              />
-              <Button
-                aria-label="Send question"
-                disabled={!canChat || !input.trim()}
-                size="icon"
-                type="submit"
-              >
-                <Send size={17} />
-              </Button>
-            </form>
-          </div>
-        </Panel>
+          </header>
 
-        {/* Right panel: citations + notes */}
-        <Panel className="min-h-0 overflow-y-auto p-4 [scrollbar-color:theme(colors.teal.300)_transparent] [scrollbar-width:thin]">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-black">Citation</h2>
-            <FileText className="text-primary" size={18} />
-          </div>
-          {activeCitation ? (
-            <div className="mt-4 rounded-lg border border-teal-200 bg-teal-50 p-4">
-              <p className="text-sm font-black text-slate-950">{activeCitation.documentTitle || 'Source document'}</p>
-              <p className="mt-1 text-xs font-black text-teal-700">{pageLabel(activeCitation)}</p>
-              <p className="mt-3 text-sm font-semibold leading-6 text-slate-700">{activeCitation.quoteText || 'No source preview returned.'}</p>
+          <div className="grid min-h-10 grid-cols-1 items-center gap-2 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {session ? <span className="inline-flex items-center gap-1 text-primary"><Check size={14} />Phạm vi đã cố định</span> : null}
+              <span className="max-w-full break-words font-bold text-slate-700">{activeScopeLabel}</span>
             </div>
-          ) : <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-sm font-semibold text-slate-500">Select a citation from an answer.</p>}
-
-          <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
-            <h2 className="text-base font-black">Learning notes</h2>
-            <NotebookPen className="text-primary" size={18} />
+            <ChatModeToggle disabled={answering} onChange={setChatMode} value={chatMode} />
+            <div className="hidden sm:block" aria-hidden="true" />
+            {!scopeValid ? <span className="whitespace-normal text-amber-700 sm:col-span-3">{['DOCUMENTS', 'PERSONAL'].includes(scopeType) ? 'Chọn ít nhất một tài liệu đã xử lý.' : 'Phạm vi chưa có tài liệu khả dụng.'}</span> : null}
           </div>
-          <div className="mt-3 space-y-2">
-            {notes.map((note, index) => (
-              <div className="rounded-lg border border-slate-200 bg-white/80 p-3" key={note.noteId || `note-${index}`}>
-                <p className="text-sm font-black">{note.noteTitle}</p>
-                <p className="mt-2 line-clamp-3 text-xs font-semibold leading-5 text-slate-500">{note.noteContent}</p>
-              </div>
-            ))}
-            {!notes.length && !loading ? <p className="text-sm font-semibold text-slate-500">No notes saved in this workspace.</p> : null}
-          </div>
-        </Panel>
-      </div>
 
-      {/* ─── History Drawer ─────────────────────────────────────────── */}
-      <AnimatePresence>
-        {historyOpen && (
-          <motion.div
-            animate={{ opacity: 1 }}
-            className="fixed inset-0 z-50 flex"
-            exit={{ opacity: 0 }}
-            initial={{ opacity: 0 }}
-          >
-            {/* Backdrop */}
-            <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={() => setHistoryOpen(false)} />
+          {error ? (
+            <div className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700" role="alert">
+              <AlertCircle className="mt-0.5 shrink-0" size={16} />
+              <span className="flex-1">{error}</span>
+              <IconButton className="size-7 text-red-600" label="Đóng thông báo" onClick={() => setError('')}><X size={15} /></IconButton>
+            </div>
+          ) : null}
 
-            {/* Drawer */}
-            <motion.aside
-              animate={{ x: 0 }}
-              className="relative ml-auto flex h-full w-full max-w-sm flex-col bg-white shadow-2xl"
-              exit={{ x: '100%' }}
-              initial={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 260 }}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-slate-200 p-4">
-                <div className="flex items-center gap-2">
-                  <div className="grid size-8 place-items-center rounded-lg bg-teal-50 text-teal-600">
-                    <Clock size={16} />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-black">Lịch sử hội thoại</h2>
-                    <p className="text-xs font-semibold text-slate-500">
-                      {activeWorkspaceData?.name || 'Workspace'} · {conversations.length} cuộc
-                    </p>
-                  </div>
+          <section className="min-h-0 flex-1 overflow-y-auto" aria-label="Nội dung trò chuyện">
+            <div className="mx-auto flex min-h-full w-full max-w-[800px] flex-col px-4 py-8 sm:px-8">
+              {loadingCourse || loadingMessages ? (
+                <InlineLoading label="Đang tải cuộc trò chuyện" />
+              ) : messages.length ? (
+                <div className="space-y-7">
+                  {messages.map((message, index) => (
+                    <ChatMessage
+                      copied={copiedId === message.id}
+                      key={message.id ?? index}
+                      message={message}
+                      onCitation={(citation) => { setActiveCitation(citation); setDrawerMode('sources') }}
+                      onCopy={() => copyMessage(message)}
+                      onSave={() => prepareNote(message)}
+                    />
+                  ))}
+                  {answering ? <AssistantThinking /> : null}
                 </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-xs font-black text-teal-700 transition hover:bg-teal-100"
-                    onClick={() => { handleNewChat(); setHistoryOpen(false) }}
-                    type="button"
-                  >
-                    <Plus size={13} /> Mới
-                  </button>
-                  <button
-                    aria-label="Close"
-                    className="grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
-                    onClick={() => setHistoryOpen(false)}
-                    type="button"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Conversation list */}
-              <div className="flex-1 overflow-y-auto">
-                {conversations.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                    <div className="grid size-12 place-items-center rounded-xl bg-slate-100 text-slate-400">
-                      <MessageSquare size={22} />
-                    </div>
-                    <p className="text-sm font-black text-slate-500">Chưa có lịch sử</p>
-                    <p className="max-w-[200px] text-xs font-semibold text-slate-400">
-                      Các cuộc trò chuyện sẽ được lưu tự động tại đây.
-                    </p>
+              ) : (
+                <div className="grid flex-1 place-items-center py-16 text-center">
+                  <div className="max-w-full px-3 sm:max-w-md">
+                    <div className="mx-auto grid size-14 place-items-center rounded-2xl bg-teal-50 text-primary"><Bot size={25} /></div>
+                    <h1 className="mt-4 break-words text-xl font-black text-slate-950">Hỏi từ {activeScopeLabel}</h1>
+                    <p className="mt-2 text-sm font-medium leading-6 text-slate-500">Câu trả lời sẽ dùng các tài liệu đã xử lý và kèm nguồn để bạn kiểm tra.</p>
                   </div>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {conversations.map((conv) => (
-                      <li
-                        key={conv.id}
-                        className={cn(
-                          'group flex cursor-pointer items-start gap-3 p-4 transition hover:bg-slate-50',
-                          activeConvId === conv.id && 'bg-teal-50',
-                        )}
-                        onClick={() => handleSelectConversation(conv.id)}
-                      >
-                        <div className={cn('mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg', activeConvId === conv.id ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-400')}>
-                          <MessageSquare size={13} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className={cn('truncate text-sm font-black', activeConvId === conv.id ? 'text-teal-700' : 'text-slate-800')}>
-                            {conv.title}
-                          </p>
-                          <p className="mt-0.5 text-xs font-semibold text-slate-400">
-                            {conv.messageCount} messages · {formatRelativeTime(conv.updatedAt)}
-                          </p>
-                        </div>
-                        <button
-                          aria-label="Xoá"
-                          className="ml-auto grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500 sm:invisible sm:group-hover:visible"
-                          onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id) }}
-                          type="button"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {/* Footer: clear all */}
-              {conversations.length > 0 && (
-                <div className="border-t border-slate-200 p-4">
-                  {clearConfirm ? (
-                    <div className="rounded-lg bg-red-50 p-3">
-                      <p className="mb-2 text-xs font-black text-red-700">Xoá toàn bộ lịch sử của workspace này?</p>
-                      <div className="flex gap-2">
-                        <button
-                          className="flex-1 rounded-lg bg-red-600 py-1.5 text-xs font-black text-white transition hover:bg-red-700"
-                          onClick={handleClearHistory}
-                          type="button"
-                        >
-                          Xoá tất cả
-                        </button>
-                        <button
-                          className="flex-1 rounded-lg border border-slate-200 py-1.5 text-xs font-black text-slate-600 transition hover:bg-slate-50"
-                          onClick={() => setClearConfirm(false)}
-                          type="button"
-                        >
-                          Huỷ
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 py-2 text-xs font-black text-red-500 transition hover:bg-red-50"
-                      onClick={() => setClearConfirm(true)}
-                      type="button"
-                    >
-                      <Trash2 size={13} /> Xoá toàn bộ lịch sử
-                    </button>
-                  )}
                 </div>
               )}
-            </motion.aside>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <div ref={messagesEndRef} />
+            </div>
+          </section>
 
-      <NoteDialog
-        draft={noteDraft}
-        onChange={setNoteDraft}
-        onClose={() => setNoteDraft(null)}
-        onSubmit={handleSaveNote}
-        saving={savingNote}
+          <form className="sticky bottom-0 border-t border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-xl" onSubmit={submit}>
+            <div className="mx-auto max-w-[800px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_12px_36px_rgba(15,23,42,.08)] focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100">
+              <div className="flex items-end gap-2">
+              <textarea
+                aria-label="Câu hỏi"
+                className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
+                disabled={!scopeValid || answering}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() }
+                }}
+                placeholder={scopeValid ? 'Hỏi về nội dung trong phạm vi đã chọn…' : 'Chọn phạm vi tài liệu trước khi hỏi'}
+                rows={1}
+                value={input}
+              />
+              <Button aria-label="Gửi câu hỏi" disabled={!input.trim() || !scopeValid || answering} size="icon" type="submit">
+                {answering ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+              </Button>
+              </div>
+            </div>
+            <p className="mx-auto mt-1.5 max-w-[800px] px-2 text-[11px] font-medium text-slate-400">Enter để gửi · Shift + Enter để xuống dòng</p>
+          </form>
+        </main>
+      </div>
+
+      <DetailDrawer
+        activeCitation={activeCitation}
+        mode={drawerMode}
+        noteDraft={noteDraft}
+        notes={notes}
+        onClose={() => { setDrawerMode(null); setNoteDraft(null) }}
+        onDraftChange={setNoteDraft}
+        onSaveNote={submitNote}
+        savingNote={savingNote}
       />
     </div>
   )
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function Message({ copied, message, onCitation, onCopy, onSaveNote }) {
-  const isUser = message.role === 'user'
-  const parsedAnswer = parseAssistantAnswer(message.content, message.citations)
-  const isRefusal = !isUser && isRefusalAnswer(message.content)
-  return (
-    <motion.article
-      animate={{ opacity: 1, y: 0 }}
-      className={cn('flex gap-3', isUser ? 'justify-end' : 'justify-start')}
-      initial={{ opacity: 0, y: 10 }}
-    >
-      {!isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-white"><Bot size={17} /></div> : null}
-      <div className={cn('max-w-[82%] rounded-lg p-4', isUser ? 'bg-slate-900 text-white' : isRefusal ? 'border border-amber-200 bg-amber-50/70' : 'border border-slate-200 bg-white', message.isHistory && 'opacity-80')}>
-        {isUser ? (
-          <p className="whitespace-pre-wrap text-sm font-semibold leading-6">{message.content}</p>
-        ) : (
-          <AssistantAnswer parsedAnswer={parsedAnswer} refusal={isRefusal} />
-        )}
-        {message.citations?.length ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {message.citations.map((citation, index) => (
-              <button
-                className="rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-xs font-black text-teal-700"
-                key={citation.id || `${citation.documentTitle}-${citation.pageStart}-${index}`}
-                onClick={() => onCitation(citation)}
-                type="button"
-              >
-                {citation.documentTitle || `Nguồn ${index + 1}`} / {pageLabel(citation)}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        {!isUser && parsedAnswer.inlineSources.length ? (
-          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
-            <p className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-slate-400">Nguồn trong câu trả lời</p>
-            <div className="flex flex-wrap gap-2">
-              {parsedAnswer.inlineSources.map((source) => (
-                <span
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600"
-                  key={source}
-                >
-                  {source}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {!isUser && !message.isHistory ? (
-          <div className="mt-3 flex gap-1 border-t border-slate-100 pt-2">
-            <IconButton label="Copy answer" onClick={onCopy}>{copied ? <Check size={15} /> : <Clipboard size={15} />}</IconButton>
-            <IconButton label="Save as note" onClick={onSaveNote}><Save size={15} /></IconButton>
-          </div>
-        ) : null}
+function Sidebar({ activeSessionId, courses, deletingId, materials, personalDocuments, navigate, onClose, onDelete,
+  onSelectSession, onToggleDocument, open, scopeType, selectedDocumentIds, sessions, setTab, tab }) {
+  const content = (
+    <aside className="flex h-full min-h-0 flex-col border-r border-slate-200/80 bg-slate-50/80">
+      <div className="flex items-center justify-between px-4 pb-3 pt-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[.16em] text-primary">Course chat</p>
+          <h2 className="text-lg font-black text-slate-950">Học tập</h2>
+        </div>
+        <IconButton className="lg:hidden" label="Đóng thanh bên" onClick={onClose}><X size={18} /></IconButton>
       </div>
-      {isUser ? <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary"><UserRound size={17} /></div> : null}
-    </motion.article>
+      <div className="mx-3 grid grid-cols-2 rounded-xl bg-slate-200/70 p-1">
+        <SidebarTab active={tab === 'history'} icon={History} label="Lịch sử" onClick={() => setTab('history')} />
+        <SidebarTab active={tab === 'materials'} icon={Library} label="Tài liệu" onClick={() => setTab('materials')} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {tab === 'history' ? (
+          sessions.length ? <div className="space-y-1.5">{sessions.map((item) => (
+            <button
+              className={cn('group flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-left transition', activeSessionId === item.id ? 'border-teal-200 bg-white text-slate-950 shadow-sm' : 'border-transparent text-slate-600 hover:bg-white')}
+              key={item.id}
+              onClick={() => onSelectSession(item)}
+              type="button"
+            >
+              <MessageSquare className="shrink-0 text-primary" size={16} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold">{item.title || 'Cuộc trò chuyện mới'}</span>
+                <span className="block truncate text-[11px] font-semibold text-slate-400">{item.scopeLabel || 'Môn học'} · {formatDate(item.updatedAt)}</span>
+              </span>
+              <span
+                aria-label="Xóa cuộc trò chuyện"
+                className="grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"
+                onClick={(event) => onDelete(event, item)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onDelete(event, item) }}
+                role="button"
+                tabIndex={0}
+              >
+                {deletingId === item.id ? <Loader2 className="animate-spin" size={14} /> : <Trash2 size={14} />}
+              </span>
+            </button>
+          ))}</div> : <SidebarEmpty icon={History} text="Chưa có cuộc trò chuyện." />
+        ) : (
+          scopeType === 'PERSONAL'
+            ? <PersonalMaterialsList documents={personalDocuments} onToggle={onToggleDocument} selectedDocumentIds={selectedDocumentIds} selectable={!activeSessionId} />
+            : scopeType === 'SEMESTER'
+            ? <SemesterMaterials courses={courses} />
+            : <MaterialsList
+                materials={materials}
+                onOpen={(documentId) => { onClose(); navigate(`/library/documents/${documentId}`) }}
+                onToggle={onToggleDocument}
+                selectedDocumentIds={selectedDocumentIds}
+                selectable={scopeType === 'DOCUMENTS' && !activeSessionId}
+              />
+        )}
+      </div>
+    </aside>
+  )
+
+  return (
+    <>
+      <div className="hidden min-h-0 lg:block">{content}</div>
+      <AnimatePresence>
+        {open ? (
+          <motion.div className="fixed inset-0 z-40 bg-slate-950/30 backdrop-blur-sm lg:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+            <motion.div className="h-full w-[min(88vw,320px)]" initial={{ x: -330 }} animate={{ x: 0 }} exit={{ x: -330 }} transition={{ type: 'spring', stiffness: 350, damping: 34 }}>{content}</motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </>
   )
 }
 
-function AssistantAnswer({ parsedAnswer, refusal }) {
-  const paragraphs = splitAnswerParagraphs(parsedAnswer.body)
-
-  if (refusal) {
-    return (
-      <div className="flex gap-3">
-        <AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} />
-        <div>
-          <p className="text-sm font-black text-amber-900">Chưa tìm thấy bằng chứng trong tài liệu</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-amber-800">
-            {parsedAnswer.body}
-          </p>
-        </div>
-      </div>
-    )
-  }
-
+function MaterialsList({ materials, onOpen, onToggle, selectable, selectedDocumentIds }) {
+  const documents = deduplicateMaterials(materials)
+  if (!documents.length) return <SidebarEmpty icon={FileText} text="Chưa có tài liệu trong môn học." />
   return (
-    <div className="space-y-3 text-sm font-semibold leading-7 text-slate-900">
-      {paragraphs.map((paragraph, index) => (
-        <p key={`${paragraph}-${index}`}>{paragraph}</p>
+    <div className="space-y-1">
+      {selectable ? <p className="px-2 pb-2 text-xs font-bold text-slate-500">Đã chọn {selectedDocumentIds.length}/{documents.length} tài liệu</p> : null}
+      {documents.map((material) => (
+        <MaterialButton
+          key={material.documentId}
+          material={material}
+          onOpen={onOpen}
+          onToggle={onToggle}
+          selectable={selectable}
+          selected={selectedDocumentIds.includes(material.documentId)}
+        />
       ))}
     </div>
   )
 }
 
-function parseAssistantAnswer(content, citations = []) {
-  const raw = String(content ?? '').trim()
-  const sourceMatch = raw.match(/\n?\s*Nguồn:\s*/i)
-  if (!sourceMatch) return { body: raw, inlineSources: [] }
-
-  const body = raw.slice(0, sourceMatch.index).trim()
-  const sourceText = raw.slice(sourceMatch.index + sourceMatch[0].length).trim()
-  const inlineSources = sourceText
-    .split(/;\s*|\]\s*,\s*\[/)
-    .map((item) => item.replace(/^\[/, '').replace(/\]$/, '').trim())
-    .filter(Boolean)
-
-  if (citations?.length) return { body, inlineSources: [] }
-  return { body, inlineSources }
+function PersonalMaterialsList({ documents, onToggle, selectable, selectedDocumentIds }) {
+  if (!documents.length) return <SidebarEmpty icon={FolderLock} text="Chưa có tài liệu cá nhân đã xử lý." />
+  return (
+    <div className="space-y-1">
+      {selectable ? <p className="px-2 pb-2 text-xs font-bold text-slate-500">Đã chọn {selectedDocumentIds.length}/{documents.length} tài liệu</p> : null}
+      {documents.map((document) => (
+        <MaterialButton
+          key={document.id}
+          material={{
+            documentId: document.id,
+            documentTitle: document.displayName,
+            originalFilename: document.name,
+            processingStatus: 'PROCESSED',
+            totalPages: document.pages,
+          }}
+          onOpen={() => window.location.assign(`/library/documents/${document.id}`)}
+          onToggle={onToggle}
+          selectable={selectable}
+          selected={selectedDocumentIds.includes(document.id)}
+        />
+      ))}
+    </div>
+  )
 }
 
-function splitAnswerParagraphs(content) {
-  const text = String(content ?? '').trim()
-  if (!text) return ['Không có nội dung trả lời.']
-
-  const explicitParagraphs = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean)
-  if (explicitParagraphs.length > 1) return explicitParagraphs
-
-  return text
-    .replace(/\s+-\s+/g, '\n- ')
-    .split(/\n+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+function MaterialButton({ material, onOpen, onToggle, selectable, selected }) {
+  return (
+    <div className={cn('flex w-full items-start gap-2 rounded-xl border px-2.5 py-2 text-left transition', selected ? 'border-teal-200 bg-white' : 'border-transparent hover:border-slate-200 hover:bg-white')}>
+      {selectable ? (
+        <input
+          aria-label={`Chọn ${material.documentTitle || material.originalFilename}`}
+          checked={selected}
+          className="mt-1 size-4 accent-teal-600"
+          onChange={() => onToggle(material.documentId)}
+          type="checkbox"
+        />
+      ) : <FileText className="mt-0.5 shrink-0 text-primary" size={15} />}
+      <button className="min-w-0 flex-1 text-left" onClick={() => selectable && onToggle(material.documentId)} type="button">
+        <span className="block truncate text-xs font-bold text-slate-700">{material.documentTitle || material.originalFilename}</span>
+        <span className="block text-[11px] font-semibold text-slate-400">{material.totalPages ? `${material.totalPages} trang` : pageRange(material)} · {titleCase(material.processingStatus)}</span>
+      </button>
+      <IconButton className="size-7 shrink-0" label="Mở tài liệu" onClick={() => onOpen(material.documentId)}><ExternalLink size={13} /></IconButton>
+    </div>
+  )
 }
 
-function isRefusalAnswer(content) {
-  const normalized = String(content ?? '').toLowerCase()
-  return normalized.includes('không tìm thấy nội dung liên quan') ||
-    normalized.includes('không tìm thấy bằng chứng') ||
-    normalized.includes('outside the scope') ||
-    normalized.includes('out of scope')
+function SemesterMaterials({ courses }) {
+  if (!courses.length) return <SidebarEmpty icon={Files} text="Học kỳ chưa có tài liệu khả dụng." />
+  return <div className="space-y-1.5">{courses.map((course) => (
+    <div className="flex items-center gap-2 rounded-xl border border-transparent px-2.5 py-2.5 hover:border-slate-200 hover:bg-white" key={course.courseId}>
+      <BookOpen className="shrink-0 text-primary" size={15} />
+      <span className="min-w-0 flex-1"><span className="block truncate text-xs font-black text-slate-700">{course.courseCode} · {course.courseName}</span><span className="text-[11px] font-semibold text-slate-400">{course.processedDocumentCount} tài liệu đã xử lý</span></span>
+    </div>
+  ))}</div>
 }
 
-function NoteDialog({ draft, onChange, onClose, onSubmit, saving }) {
-  if (!draft) return null
+function ChatMessage({ copied, message, onCitation, onCopy, onSave }) {
+  const assistant = message.role === 'assistant'
+  return (
+    <article className={cn('flex gap-3', assistant ? 'items-start' : 'justify-end')}>
+      {assistant ? <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-white"><Bot size={17} /></div> : null}
+      <div className={cn('min-w-0', assistant ? 'w-full' : 'max-w-[82%]')}>
+        <div className={cn('whitespace-pre-wrap text-sm font-medium leading-7', assistant ? 'text-slate-800' : 'rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-white shadow-sm')}>
+          {message.content}
+        </div>
+        {assistant ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {message.generationMode ? <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-500">{generationLabel(message.generationMode)}</span> : null}
+            {(message.citations ?? []).map((citation, index) => (
+              <button className="inline-flex max-w-full items-center gap-1 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1 text-[11px] font-bold text-primary transition hover:bg-teal-100" key={citation.id ?? `${message.id}-${index}`} onClick={() => onCitation(citation)} type="button">
+                <BookOpen size={12} /><span className="truncate">{citation.documentTitle || `Nguồn ${index + 1}`}</span>{citation.pageStart ? ` · tr. ${citation.pageStart}` : ''}
+              </button>
+            ))}
+            <IconButton className="size-7" label="Sao chép câu trả lời" onClick={onCopy}>{copied ? <Check size={14} /> : <Clipboard size={14} />}</IconButton>
+            <IconButton className="size-7" label="Lưu ghi chú" onClick={onSave}><Save size={14} /></IconButton>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraftChange, onSaveNote, savingNote }) {
   return (
     <AnimatePresence>
-      <motion.div
-        animate={{ opacity: 1 }}
-        className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm"
-        exit={{ opacity: 0 }}
-        initial={{ opacity: 0 }}
-      >
-        <motion.form animate={{ y: 0 }} className="os-panel w-full max-w-lg p-5 shadow-2xl" initial={{ y: 20 }} onSubmit={onSubmit}>
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black">Save learning note</h2>
-            <button aria-label="Close" className="grid size-9 place-items-center rounded-lg hover:bg-slate-100" onClick={onClose} type="button"><X size={17} /></button>
-          </div>
-          <label className="mt-5 block text-sm font-black">
-            Title
-            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 font-semibold outline-none focus:border-teal-400" onChange={(e) => onChange({ ...draft, title: e.target.value })} required value={draft.title} />
-          </label>
-          <label className="mt-3 block text-sm font-black">
-            Content
-            <textarea className="mt-1 min-h-48 w-full rounded-lg border border-slate-200 px-3 py-2.5 font-semibold leading-6 outline-none focus:border-teal-400" onChange={(e) => onChange({ ...draft, content: e.target.value })} required value={draft.content} />
-          </label>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button onClick={onClose} type="button" variant="secondary">Cancel</Button>
-            <Button disabled={saving} type="submit">{saving ? <Loader2 className="animate-spin" size={16} /> : <NotebookPen size={16} />}Save note</Button>
-          </div>
-        </motion.form>
-      </motion.div>
+      {mode ? (
+        <motion.div className="fixed inset-0 z-50 bg-slate-950/25 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+          <motion.aside className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-white/70 bg-white shadow-2xl sm:w-[420px]" initial={{ x: 440 }} animate={{ x: 0 }} exit={{ x: 440 }} transition={{ type: 'spring', stiffness: 350, damping: 34 }}>
+            <header className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div className="flex items-center gap-2">
+                {mode === 'sources' ? <BookOpen className="text-primary" size={20} /> : <NotebookPen className="text-primary" size={20} />}
+                <h2 className="text-lg font-black text-slate-950">{mode === 'sources' ? 'Nguồn trích dẫn' : 'Ghi chú học tập'}</h2>
+              </div>
+              <IconButton label="Đóng" onClick={onClose}><X size={18} /></IconButton>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              {mode === 'sources' ? <SourceDetail citation={activeCitation} /> : (
+                <div className="space-y-5">
+                  {noteDraft ? (
+                    <form className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4" onSubmit={onSaveNote}>
+                      <label className="block text-xs font-black uppercase tracking-wide text-slate-500">Tiêu đề</label>
+                      <input className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100" onChange={(event) => onDraftChange({ ...noteDraft, noteTitle: event.target.value })} value={noteDraft.noteTitle} />
+                      <label className="mt-3 block text-xs font-black uppercase tracking-wide text-slate-500">Nội dung</label>
+                      <textarea className="mt-1 min-h-40 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100" onChange={(event) => onDraftChange({ ...noteDraft, noteContent: event.target.value })} value={noteDraft.noteContent} />
+                      <div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="ghost" type="button" onClick={() => onDraftChange(null)}>Hủy</Button><Button disabled={savingNote || !noteDraft.noteContent.trim()} size="sm" type="submit">{savingNote ? <Loader2 className="animate-spin" size={15} /> : <Save size={15} />}Lưu</Button></div>
+                    </form>
+                  ) : null}
+                  {notes.length ? notes.map((note) => (
+                    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4" key={note.noteId ?? note.id}>
+                      <h3 className="font-black text-slate-900">{note.noteTitle}</h3>
+                      <p className="mt-2 whitespace-pre-wrap text-sm font-medium leading-6 text-slate-600">{note.noteContent}</p>
+                      <p className="mt-3 text-[11px] font-semibold text-slate-400">{formatDate(note.createdAt)}</p>
+                    </article>
+                  )) : <SidebarEmpty icon={NotebookPen} text="Chưa có ghi chú trong môn học." />}
+                </div>
+              )}
+            </div>
+          </motion.aside>
+        </motion.div>
+      ) : null}
     </AnimatePresence>
   )
 }
 
-function pageLabel(citation) {
-  if (!citation.pageStart) return 'Chưa có trang'
-  return citation.pageEnd && citation.pageEnd !== citation.pageStart
-    ? `Trang ${citation.pageStart}-${citation.pageEnd}`
-    : `Trang ${citation.pageStart}`
-}
-
-function formatRelativeTime(ts) {
-  const value = typeof ts === 'number' ? ts : new Date(ts).getTime()
-  if (!Number.isFinite(value)) return 'recently'
-  const diff = Date.now() - value
-  const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return 'vừa xong'
-  if (minutes < 60) return `${minutes} phút trước`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} giờ trước`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days} ngày trước`
-  return new Date(value).toLocaleDateString('vi-VN')
-}
-
-function LoadingSpinner() {
+function SourceDetail({ citation }) {
+  if (!citation) return <SidebarEmpty icon={BookOpen} text="Chọn một thẻ nguồn dưới câu trả lời để xem chi tiết." />
   return (
-    <div className="flex min-h-72 items-center justify-center gap-3 text-sm font-black text-slate-500">
-      <Loader2 className="animate-spin text-primary" size={20} />Loading workspace data...
+    <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-xs font-black uppercase tracking-wide text-primary">{citation.documentTitle || 'Tài liệu nguồn'}</p>
+      <p className="mt-1 text-sm font-bold text-slate-500">{citation.pageStart ? `Trang ${citation.pageStart}${citation.pageEnd && citation.pageEnd !== citation.pageStart ? `–${citation.pageEnd}` : ''}` : 'Không có thông tin trang'}</p>
+      <blockquote className="mt-4 border-l-2 border-teal-400 pl-4 text-sm font-medium italic leading-7 text-slate-700">{citation.quoteText || 'Không có đoạn trích xem trước.'}</blockquote>
+    </article>
+  )
+}
+
+function ScopeSelect({ children, label, ...props }) {
+  return (
+    <label className="min-w-0 flex-1 sm:flex-none">
+      <span className="sr-only">{label}</span>
+      <select className="h-10 w-full max-w-[290px] truncate rounded-xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-800 outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100" {...props}>{children}</select>
+    </label>
+  )
+}
+
+function ChatModeToggle({ disabled, onChange, value }) {
+  const modes = [
+    { value: 'rag', label: 'RAG', icon: BookOpen },
+    { value: 'fine_tuning', label: 'Fine-tuning', icon: Bot },
+  ]
+  return (
+    <div className="mx-auto flex h-9 shrink-0 items-center rounded-xl bg-slate-100 p-1 shadow-inner shadow-slate-200/60" aria-label="AI model">
+      {modes.map(({ value: mode, label, icon: Icon }) => (
+        <button
+          aria-pressed={value === mode}
+          className={cn(
+            'relative isolate flex h-7 items-center gap-1.5 overflow-hidden rounded-lg px-2.5 text-xs font-black transition-colors sm:px-3',
+            value === mode ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
+            disabled && 'cursor-not-allowed opacity-70',
+          )}
+          disabled={disabled}
+          key={mode}
+          onClick={() => onChange(mode)}
+          type="button"
+        >
+          {value === mode ? (
+            <motion.span
+              className="absolute inset-0 -z-10 rounded-lg bg-white shadow-sm"
+              layoutId="chat-mode-active"
+              transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+            />
+          ) : null}
+          <motion.span
+            animate={{ scale: value === mode ? 1.08 : 1 }}
+            className="grid place-items-center"
+            transition={{ type: 'spring', stiffness: 380, damping: 24 }}
+          >
+            <Icon size={13} />
+          </motion.span>
+          <span className="relative">{label}</span>
+        </button>
+      ))}
     </div>
   )
 }
 
-function ErrorBanner({ message }) {
+function ScopeModeControl({ disabled, onChange, value }) {
+  const modes = [
+    { value: 'PERSONAL', label: 'Cá nhân', icon: FolderLock },
+    { value: 'DOCUMENTS', label: 'Tài liệu', icon: FileText },
+    { value: 'COURSE', label: 'Môn học', icon: BookOpen },
+    { value: 'SEMESTER', label: 'Học kỳ', icon: Files },
+  ]
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
-      <AlertTriangle className="mt-0.5 shrink-0" size={17} />{message}
+    <div className="flex h-10 shrink-0 items-center rounded-xl bg-slate-100 p-1" aria-label="Phạm vi trả lời">
+      {modes.map(({ value: mode, label, icon: Icon }) => (
+        <button
+          aria-label={label}
+          className={cn('flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-black transition', value === mode ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-800', disabled && 'cursor-not-allowed opacity-70')}
+          disabled={disabled}
+          key={mode}
+          onClick={() => onChange(mode)}
+          type="button"
+        >
+          <Icon size={13} /><span className="hidden sm:inline">{label}</span>
+        </button>
+      ))}
     </div>
   )
 }
 
-export default WorkspacePage
+function SidebarTab({ active, icon: Icon, label, onClick }) {
+  return <button className={cn('flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-black transition', active ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-800')} onClick={onClick} type="button"><Icon size={14} />{label}</button>
+}
+
+function SidebarEmpty({ icon: Icon, text }) {
+  return <div className="grid place-items-center px-4 py-12 text-center"><Icon className="text-slate-300" size={25} /><p className="mt-2 text-xs font-bold leading-5 text-slate-400">{text}</p></div>
+}
+
+function CenteredState({ description, icon: Icon, spin, title }) {
+  return <div className="grid min-h-[60vh] place-items-center px-4 text-center"><div><Icon className={cn('mx-auto text-primary', spin && 'animate-spin')} size={30} /><h1 className="mt-3 text-xl font-black text-slate-950">{title}</h1>{description ? <p className="mt-2 text-sm font-medium text-slate-500">{description}</p> : null}</div></div>
+}
+
+function InlineLoading({ label }) {
+  return <div className="grid flex-1 place-items-center py-16 text-sm font-bold text-slate-400"><span className="flex items-center gap-2"><Loader2 className="animate-spin text-primary" size={18} />{label}</span></div>
+}
+
+function AssistantThinking() {
+  return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-xl bg-primary text-white"><Bot size={17} /></div><div className="flex gap-1 rounded-xl bg-slate-100 px-4 py-3"><span className="size-1.5 animate-bounce rounded-full bg-slate-400" /><span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:120ms]" /><span className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:240ms]" /></div></div>
+}
+
+function pageRange(material) {
+  if (material.pageStart && material.pageEnd) return material.pageStart === material.pageEnd ? `Trang ${material.pageStart}` : `Trang ${material.pageStart}–${material.pageEnd}`
+  if (material.totalPages) return `${material.totalPages} trang`
+  return 'Chưa có trang'
+}
+
+function deduplicateMaterials(materials) {
+  const byId = new Map()
+  const all = [
+    ...(materials?.chapters ?? []).flatMap((chapter) => chapter.materials ?? []),
+    ...(materials?.unclassifiedMaterials ?? []),
+  ]
+  all.forEach((material) => {
+    if (!material?.documentId || material.processingStatus !== 'PROCESSED') return
+    const current = byId.get(material.documentId)
+    if (!current) byId.set(material.documentId, { ...material })
+    else byId.set(material.documentId, { ...current, totalPages: Math.max(current.totalPages ?? 0, material.totalPages ?? 0) || null })
+  })
+  return [...byId.values()]
+}
+
+function buildScopeLabel(scopeType, semester, course, selectedCount) {
+  if (scopeType === 'PERSONAL') return `${selectedCount} tài liệu cá nhân`
+  if (scopeType === 'SEMESTER') return semester?.semesterName || 'Học kỳ'
+  const courseLabel = course ? `${course.courseCode} · ${course.courseName}` : 'Môn học'
+  return scopeType === 'DOCUMENTS' ? `${selectedCount} tài liệu · ${courseLabel}` : courseLabel
+}
+
+function generationLabel(mode) {
+  if (mode === 'GREETING') return 'Chào hỏi'
+  if (mode === 'LOCAL_FALLBACK') return 'RAG dự phòng'
+  if (mode === 'FINE_TUNED') return 'Fine-tuned'
+  return 'RAG local'
+}
+
+function formatDate(value) {
+  if (!value) return 'Vừa tạo'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Vừa tạo'
+  return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+function titleCase(value) {
+  const text = String(value ?? '').toLowerCase()
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Unknown'
+}
+
+function readError(error, fallback) {
+  if (error?.status === 403) return 'Bạn không còn quyền truy cập môn học hoặc học kỳ này.'
+  return error?.message || fallback
+}

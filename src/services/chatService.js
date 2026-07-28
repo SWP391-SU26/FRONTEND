@@ -1,20 +1,21 @@
 import { request } from './httpClient.js'
-import { getCurrentUserId } from './authService.js'
 
-export async function getSessions(workspaceId) {
-  try {
-    const result = await request(`/chat/sessions/workspace/${workspaceId}`)
-    return unwrapList(result).map(toUiSession)
-  } catch (error) {
-    if ([404, 405].includes(error.status)) return []
-    throw error
-  }
+export async function getSessions(scope) {
+  const params = typeof scope === 'string' ? { courseId: scope } : scope
+  const query = params?.scopeType === 'PERSONAL'
+    ? 'scopeType=PERSONAL'
+    : params?.semesterId
+    ? `semesterId=${encodeURIComponent(params.semesterId)}`
+    : `courseId=${encodeURIComponent(params?.courseId ?? '')}`
+  const result = await request(`/chat/sessions?${query}`)
+  return unwrapList(result).map(toUiSession)
 }
 
-export async function createSession(workspaceId, title = 'New conversation') {
+export async function createSession(scope, title = 'New conversation') {
+  const payload = typeof scope === 'string' ? { courseId: scope } : scope
   return toUiSession(await request('/chat/sessions', {
     method: 'POST',
-    body: JSON.stringify({ userId: getCurrentUserId(), workspaceId, title }),
+    body: JSON.stringify({ ...payload, title }),
   }))
 }
 
@@ -27,34 +28,17 @@ export async function getMessages(sessionId, { page = 0, size = 50 } = {}) {
 }
 
 export async function deleteSession(sessionId) {
-  try {
-    return await request(`/chat/sessions/${sessionId}`, { method: 'DELETE' })
-  } catch (error) {
-    if ([404, 405].includes(error.status)) {
-      throw new Error('The backend does not expose a delete chat session API yet.', { cause: error })
-    }
-    throw error
-  }
+  return request(`/chat/sessions/${sessionId}`, { method: 'DELETE' })
 }
 
-export async function clearWorkspaceSessions(workspaceId) {
-  try {
-    return await request(`/chat/sessions/workspace/${workspaceId}`, { method: 'DELETE' })
-  } catch (error) {
-    if ([404, 405].includes(error.status)) {
-      throw new Error('The backend does not expose a clear chat history API yet.', { cause: error })
-    }
-    throw error
-  }
-}
-
-export async function askQuestion(sessionId, question) {
+export async function askQuestion(sessionId, question, { mode = 'rag' } = {}) {
   const response = await request(`/chat/sessions/${sessionId}/ask`, {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, mode, answerMode: mode }),
   })
   return {
     ...response,
+    generationMode: response?.generationMode ?? 'LOCAL_EXTRACTIVE',
     citations: (response?.citations ?? []).map(toUiCitation),
   }
 }
@@ -64,7 +48,6 @@ export function saveNote(payload) {
     method: 'POST',
     body: JSON.stringify({
       workspaceId: payload.workspaceId,
-      userId: getCurrentUserId(),
       noteTitle: payload.noteTitle,
       noteContent: payload.noteContent,
     }),
@@ -78,6 +61,11 @@ function toUiSession(session) {
     id: session.chatSessionId ?? session.sessionId ?? session.id,
     chatSessionId: session.chatSessionId ?? session.sessionId ?? session.id,
     workspaceId: session.workspaceId,
+    semesterId: session.semesterId ?? null,
+    courseId: session.courseId ?? null,
+    scopeType: session.scopeType ?? 'COURSE',
+    documentIds: session.documentIds ?? [],
+    scopeLabel: session.scopeLabel ?? '',
     title: session.sessionTitle ?? session.title ?? 'New conversation',
     messageCount: session.messageCount ?? 0,
     createdAt: session.startedAt ?? session.createdAt,
@@ -91,6 +79,7 @@ function toUiMessage(message) {
     id: message.messageId ?? message.id,
     role: role === 'assistant' ? 'assistant' : 'user',
     content: message.messageContent ?? message.content ?? '',
+    generationMode: message.generationMode ?? message.llmModel ?? null,
     citations: (message.citations ?? []).map(toUiCitation),
     createdAt: message.createdAt,
   }
