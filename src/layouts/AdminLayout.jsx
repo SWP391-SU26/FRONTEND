@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
   BarChart3,
   BookOpen,
@@ -8,12 +8,12 @@ import {
   Gauge,
   Home,
   LogOut,
-  Search,
   Users,
 } from 'lucide-react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
-import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated, isResearcherSession } from '../services/authService.js'
+import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated } from '../services/authService.js'
+import { getAdminDashboardHealth } from '../services/adminDashboardService.js'
 
 const adminNav = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
@@ -24,14 +24,56 @@ const adminNav = [
   { href: '/admin/research-dashboard', label: 'Research', icon: BarChart3 },
 ]
 
+const AdminOperationalHealthContext = createContext({
+  updateOperationalHealth: () => {},
+})
+
+// The hook shares the layout-owned health state with the nested dashboard route.
+// eslint-disable-next-line react-refresh/only-export-components
+export function useAdminOperationalHealth() {
+  return useContext(AdminOperationalHealthContext)
+}
+
 function AdminLayout() {
   const navigate = useNavigate()
   const user = getSavedUser()
   const initials = getInitials(user?.name)
-  const researcherOnly = isResearcherSession() && !isAdminSession()
-  const visibleNav = researcherOnly
-    ? adminNav.filter((item) => ['/admin/test-set', '/admin/research-dashboard'].includes(item.href))
-    : adminNav
+  const [operationalHealth, setOperationalHealth] = useState({ status: 'loading', value: null })
+
+  const updateOperationalHealth = useCallback((health) => {
+    setOperationalHealth({ status: 'ready', value: health })
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    getAdminDashboardHealth()
+      .then((health) => {
+        if (active) updateOperationalHealth(health)
+      })
+      .catch(() => {
+        if (active) setOperationalHealth({ status: 'unavailable', value: null })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [updateOperationalHealth])
+
+  const operationalHealthLabel = operationalHealth.status === 'loading'
+    ? 'Checking status'
+    : operationalHealth.status === 'unavailable'
+      ? 'Status unavailable'
+      : operationalHealth.value?.status === 'OK'
+        ? 'System healthy'
+        : 'Needs attention'
+
+  const operationalHealthClassName = operationalHealth.status === 'unavailable'
+    ? 'bg-slate-100 text-slate-600'
+    : operationalHealth.value?.status === 'OK'
+      ? 'bg-emerald-50 text-emerald-700'
+      : 'bg-amber-50 text-amber-800'
+
+  const contextValue = useMemo(() => ({ updateOperationalHealth }), [updateOperationalHealth])
 
   function handleLogout() {
     logout().catch(() => {})
@@ -39,18 +81,19 @@ function AdminLayout() {
     navigate('/login')
   }
 
-  if (!isAdminSession() && !isResearcherSession()) {
+  if (!isAdminSession()) {
     return <Navigate replace to={isAuthenticated() ? '/workspace' : '/login'} />
   }
 
   return (
-    <div className="app-ambient min-h-screen text-slate-950">
-      <div className="ambient-lines" />
-      <div className="noise-layer" />
-      <div className="motion-field" />
+    <AdminOperationalHealthContext.Provider value={contextValue}>
+      <div className="app-ambient min-h-screen text-slate-950">
+        <div className="ambient-lines" />
+        <div className="noise-layer" />
+        <div className="motion-field" />
 
-      <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col gap-3 p-3 lg:flex-row lg:p-4">
-        <aside className="notebook-panel lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:w-[292px] lg:shrink-0">
+        <div className="mx-auto flex min-h-screen max-w-[1680px] flex-col gap-3 p-3 lg:flex-row lg:p-4">
+          <aside className="notebook-panel lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:w-[292px] lg:shrink-0">
           <div className="source-glow" />
           <div className="relative border-b border-border p-4">
             <NavLink className="flex items-center gap-3" to="/workspace">
@@ -70,15 +113,15 @@ function AdminLayout() {
             </NavLink>
           </div>
 
-          <nav className="relative flex gap-2 overflow-x-auto p-3 lg:block lg:space-y-1 lg:overflow-visible">
-            {visibleNav.map((item) => {
+          <nav className="relative grid grid-cols-3 gap-1.5 p-2 lg:block lg:space-y-1 lg:p-3">
+            {adminNav.map((item) => {
               const Icon = item.icon
 
               return (
                 <NavLink
                   className={({ isActive }) =>
                     cn(
-                      'flex min-w-max items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-black transition lg:min-w-0',
+                      'flex min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 py-2.5 text-[11px] font-black transition sm:text-sm lg:justify-start lg:gap-3 lg:px-3',
                       isActive
                         ? 'bg-primary text-white shadow-[0_12px_24px_rgba(15,118,110,.2)]'
                         : 'text-slate-600 hover:bg-teal-50 hover:text-primary',
@@ -88,7 +131,7 @@ function AdminLayout() {
                   to={item.href}
                 >
                   <Icon size={17} />
-                  {item.label}
+                  <span className="truncate">{item.label}</span>
                 </NavLink>
               )
             })}
@@ -97,17 +140,18 @@ function AdminLayout() {
 
         <div className="min-w-0 flex-1">
           <header className="notebook-panel mb-3 flex flex-wrap items-center justify-between gap-3 p-3">
-            <motion.div
-              className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-white/90 px-3 text-sm font-semibold text-slate-500 shadow-sm"
-              whileHover={{ y: -1 }}
-            >
-              <Search size={16} />
-              <span className="truncate">Search users, documents, courses...</span>
-            </motion.div>
+            <div className="min-w-0 flex-1 px-2">
+              <p className="text-sm font-black tracking-tight text-slate-900">Admin workspace</p>
+              <p className="truncate text-xs font-semibold text-slate-500">Users, course materials, and research operations</p>
+            </div>
             <div className="flex items-center gap-2">
-              <div className="hidden rounded-lg bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700 sm:flex">
-                System healthy
-              </div>
+              <NavLink
+                aria-label={`Operational status: ${operationalHealthLabel}`}
+                className={cn('hidden rounded-lg px-3 py-2 text-xs font-black transition hover:opacity-80 sm:flex', operationalHealthClassName)}
+                to="/admin/dashboard#operational-alerts"
+              >
+                {operationalHealthLabel}
+              </NavLink>
               <NavLink
                 className="grid size-10 place-items-center rounded-xl border border-border bg-white/90 text-slate-600 shadow-sm transition hover:bg-teal-50 hover:text-primary"
                 title="Back to workspace"
@@ -134,7 +178,8 @@ function AdminLayout() {
           </main>
         </div>
       </div>
-    </div>
+      </div>
+    </AdminOperationalHealthContext.Provider>
   )
 }
 

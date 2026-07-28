@@ -1,5 +1,8 @@
 import { request } from './httpClient.js'
 
+export const ADMIN_ROLE = 'ADMIN'
+export const STUDENT_ROLE = 'STUDENT'
+
 export async function login({ email, password }) {
   const auth = await request('/auth/login', {
     method: 'POST',
@@ -92,7 +95,8 @@ export function clearSession() {
 
 export function getSavedUser() {
   try {
-    return JSON.parse(localStorage.getItem('fstu_user') ?? 'null')
+    const user = JSON.parse(localStorage.getItem('fstu_user') ?? 'null')
+    return normalizeSavedUser(user)
   } catch {
     clearSession()
     return null
@@ -105,28 +109,24 @@ export function isAuthenticated() {
 }
 
 export function isAdminSession() {
-  return hasRole(getSavedUser(), 'ADMIN')
-}
-
-export function isResearcherSession() {
-  return hasRole(getSavedUser(), 'RESEARCHER')
+  return hasRole(getSavedUser(), ADMIN_ROLE)
 }
 
 export function hasRole(user, roleName) {
   const expected = roleName?.toUpperCase()
-  return Boolean(user?.roles?.some((role) => role?.toUpperCase() === expected))
+  if (![ADMIN_ROLE, STUDENT_ROLE].includes(expected)) return false
+  return normalizeRoles(user?.roles ?? (user?.role ? [user.role] : [])).includes(expected)
 }
 
 export function getDefaultRouteForUser(user) {
-  if (hasRole(user, 'ADMIN')) return '/admin/dashboard'
-  if (hasRole(user, 'RESEARCHER')) return '/admin/test-set'
+  if (hasRole(user, ADMIN_ROLE)) return '/admin/dashboard'
   return '/workspace'
 }
 
 function toSession(auth) {
   const rawUser = auth?.user ?? auth
   const roles = normalizeRoles(auth?.roles ?? rawUser?.roles)
-  const primaryRole = roles[0] ?? 'STUDENT'
+  const primaryRole = roles[0]
 
   return {
     accessToken: auth?.accessToken ?? auth?.token ?? '',
@@ -157,7 +157,17 @@ function isJwtExpired(token) {
   }
 }
 
-function normalizeRoles(roles) {
-  if (!Array.isArray(roles) || roles.length === 0) return ['STUDENT']
-  return roles.map((role) => String(role).toUpperCase())
+export function normalizeRoles(roles) {
+  const rawRoles = Array.isArray(roles) ? roles : (roles ? [roles] : [])
+  return [rawRoles.some((role) => String(role).toUpperCase() === ADMIN_ROLE) ? ADMIN_ROLE : STUDENT_ROLE]
+}
+
+function normalizeSavedUser(user) {
+  if (!user || typeof user !== 'object') return null
+  const roles = normalizeRoles(user.roles ?? (user.role ? [user.role] : []))
+  return {
+    ...user,
+    role: roles[0].toLowerCase(),
+    roles,
+  }
 }

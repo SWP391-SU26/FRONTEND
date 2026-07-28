@@ -4,18 +4,18 @@ export function buildQualityChartData(comparison) {
   const rag = comparison?.ragExperiment ?? {}
   const fine = comparison?.fineTunedExperiment ?? {}
   return [
-    metricRow('Độ chính xác', rag.answerCorrectness, fine.answerCorrectness),
-    metricRow('Mức liên quan', rag.answerRelevance, fine.answerRelevance),
-    metricRow('Độ tương đồng', rag.semanticSimilarity, fine.semanticSimilarity),
+    metricRow('Correctness', rag.answerCorrectness, fine.answerCorrectness),
+    metricRow('Relevance', rag.answerRelevance, fine.answerRelevance),
+    metricRow('Similarity', rag.semanticSimilarity, fine.semanticSimilarity),
   ]
 }
 
 export function buildGroundingChartData(comparison) {
   const rag = comparison?.ragExperiment ?? {}
   return [
-    singleMetricRow('Bám sát nguồn', rag.faithfulness),
-    singleMetricRow('Chọn đúng nguồn', rag.contextPrecision),
-    singleMetricRow('Lấy đủ nội dung', rag.contextRecall),
+    singleMetricRow('Faithfulness', rag.faithfulness),
+    singleMetricRow('Context precision', rag.contextPrecision),
+    singleMetricRow('Context recall', rag.contextRecall),
   ]
 }
 
@@ -24,7 +24,7 @@ export function buildOutcomeChartData(rows = []) {
   rows.forEach((row) => { counts[classifyOutcome(row)] += 1 })
   const total = rows.length
   const percentages = Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, total ? round(value * 100 / total) : 0]))
-  return { counts, percentages, total, chartData: [{ name: `${total} câu`, ...percentages }] }
+  return { counts, percentages, total, chartData: [{ name: `${total} questions`, ...percentages }] }
 }
 
 export function buildScatterChartData(rows = []) {
@@ -60,10 +60,10 @@ export function buildDashboardKpis(comparison) {
     ? 1 - Math.min(rag.latencyMs, fine.latencyMs) / Math.max(rag.latencyMs, fine.latencyMs) : null
   return {
     validLabel: `RAG ${ragValid}/${total} · Fine-tuned ${fineValid}/${total}`,
-    qualityLabel: qualityDelta == null ? 'Chưa đủ dữ liệu' : Math.abs(qualityDelta) < TIE_THRESHOLD
-      ? 'Gần tương đương' : `${qualityDelta > 0 ? 'Fine-tuned' : 'RAG'} +${Math.round(Math.abs(qualityDelta) * 100)} điểm %`,
-    latencyLabel: latencyDelta == null ? 'Chưa đủ dữ liệu' : `${rag.latencyMs < fine.latencyMs ? 'RAG' : 'Fine-tuned'} nhanh hơn ${Math.round(latencyDelta * 100)}%`,
-    compatibilityLabel: comparison?.datasetChecksum && comparison?.benchmarkProfile ? 'Cùng snapshot và profile' : 'Cần kiểm tra lại',
+    qualityLabel: qualityDelta == null ? 'Insufficient data' : Math.abs(qualityDelta) < TIE_THRESHOLD
+      ? 'Near equivalent' : `${qualityDelta > 0 ? 'Fine-tuned' : 'RAG'} +${Math.round(Math.abs(qualityDelta) * 100)} pp`,
+    latencyLabel: latencyDelta == null ? 'Insufficient data' : `${rag.latencyMs < fine.latencyMs ? 'RAG' : 'Fine-tuned'} faster by ${Math.round(latencyDelta * 100)}%`,
+    compatibilityLabel: comparison?.datasetChecksum && comparison?.benchmarkProfile ? 'Same snapshot and profile' : 'Needs review',
   }
 }
 

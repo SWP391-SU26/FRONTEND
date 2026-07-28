@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(({ token }) => {
     localStorage.setItem('fstu_access_token', token)
     localStorage.setItem('fstu_user', JSON.stringify({
-      id: 'researcher-1', name: 'Researcher', email: 'researcher@example.com', roles: ['RESEARCHER'],
+      id: 'admin-1', name: 'Admin', email: 'admin@example.com', roles: ['ADMIN'],
     }))
   }, { token: futureToken })
 
@@ -40,7 +40,7 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('researcher can inspect readiness and compare same-checksum runs after reload', async ({ page }) => {
+test('admin can inspect readiness and compare same-checksum runs after reload', async ({ page }) => {
   await page.goto('/admin/test-set')
   await expect(page.getByRole('heading', { name: 'Test Set & Benchmark' })).toBeVisible()
   await expect(page.getByText('Strict RAG generation is ready.')).toBeVisible()
