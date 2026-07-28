@@ -28,6 +28,8 @@ export default function SemesterWorkspacePage() {
   const [courseForm, setCourseForm] = useState(emptyCourse)
   const [documents, setDocuments] = useState([])
   const [busy, setBusy] = useState(false)
+  const [confirmBusy, setConfirmBusy] = useState(false)
+  const [confirmTarget, setConfirmTarget] = useState(null)
   const [uploadingCourseId, setUploadingCourseId] = useState('')
   const [togglingCourseId, setTogglingCourseId] = useState('')
   const [error, setError] = useState('')
@@ -136,26 +138,23 @@ export default function SemesterWorkspacePage() {
   }
 
   async function removeSemester() {
-    if (!window.confirm('Archive this semester and all of its courses?')) return
-    try {
-      await deleteSemesterWorkspace(selected)
-      setSelected('')
-      setActiveCourse(null)
-      await loadSemesters()
-    } catch (e) {
-      setError(e.message)
-    }
+    setConfirmTarget({
+      type: 'semester',
+      title: 'Archive semester?',
+      description: 'This semester and all courses inside it will be hidden from chat until restored or recreated.',
+      confirmLabel: 'Archive semester',
+    })
   }
 
   async function removeCourse() {
-    if (!window.confirm('Archive this course? It will no longer be available for chat.')) return
-    try {
-      await deleteCourse(activeCourse.id)
-      setActiveCourse(null)
-      await loadCourses(selected)
-    } catch (e) {
-      setError(e.message)
-    }
+    if (!activeCourse) return
+    setConfirmTarget({
+      type: 'course',
+      course: activeCourse,
+      title: 'Archive course?',
+      description: `${activeCourse.name} will no longer be available for chat.`,
+      confirmLabel: 'Archive course',
+    })
   }
 
   async function upload(course, file) {
@@ -175,12 +174,40 @@ export default function SemesterWorkspacePage() {
   }
 
   async function removeDocument(document) {
-    if (!window.confirm(`Delete ${document.name}?`)) return
+    setConfirmTarget({
+      type: 'document',
+      document,
+      title: 'Delete document?',
+      description: `${document.name} will be removed from the course materials and RAG access.`,
+      confirmLabel: 'Delete document',
+    })
+  }
+
+  async function confirmDeleteAction() {
+    if (!confirmTarget) return
+    setConfirmBusy(true)
+    setError('')
     try {
-      await deleteDocument(document.id)
-      await loadCourses(selected)
+      if (confirmTarget.type === 'semester') {
+        await deleteSemesterWorkspace(selected)
+        setSelected('')
+        setActiveCourse(null)
+        await loadSemesters()
+      }
+      if (confirmTarget.type === 'course') {
+        await deleteCourse(confirmTarget.course.id)
+        setActiveCourse(null)
+        await loadCourses(selected)
+      }
+      if (confirmTarget.type === 'document') {
+        await deleteDocument(confirmTarget.document.id)
+        await loadCourses(selected)
+      }
+      setConfirmTarget(null)
     } catch (e) {
       setError(e.message)
+    } finally {
+      setConfirmBusy(false)
     }
   }
 
@@ -287,6 +314,15 @@ export default function SemesterWorkspacePage() {
       busy={busy}
       onSubmit={submitForm}
       onClose={() => setMode('')}
+    />}
+
+    {confirmTarget && <ConfirmModal
+      busy={confirmBusy}
+      confirmLabel={confirmTarget.confirmLabel}
+      description={confirmTarget.description}
+      title={confirmTarget.title}
+      onCancel={() => setConfirmTarget(null)}
+      onConfirm={confirmDeleteAction}
     />}
   </div>
 }
@@ -422,6 +458,29 @@ function EditorModal({ mode, semesterName, setSemesterName, courseForm, setCours
         <Button disabled={busy} type="submit">{busy ? 'Saving...' : 'Save'}</Button>
       </div>
     </form>
+  </div>
+}
+
+function ConfirmModal({ busy, confirmLabel, description, title, onCancel, onConfirm }) {
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4" onMouseDown={(event) => event.target === event.currentTarget && !busy && onCancel()}>
+    <div className="os-panel w-full max-w-md p-5 shadow-2xl">
+      <div className="flex items-start gap-3">
+        <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-red-50 text-red-600">
+          <Trash2 size={18}/>
+        </div>
+        <div>
+          <h2 className="text-lg font-black text-slate-950">{title}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+        </div>
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button>
+        <Button type="button" variant="danger" disabled={busy} onClick={onConfirm}>
+          {busy ? <Loader2 className="animate-spin" size={15}/> : <Trash2 size={15}/>}
+          {busy ? 'Working...' : confirmLabel}
+        </Button>
+      </div>
+    </div>
   </div>
 }
 

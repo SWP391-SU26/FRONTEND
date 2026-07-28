@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('./httpClient.js', () => ({ request: vi.fn() }))
 
 import { request } from './httpClient.js'
-import { createDataset, createExperiment, getExperiment } from './evaluationService.js'
+import { createDataset, createExperiment, getExperiment, runBenchmark } from './evaluationService.js'
 
 describe('Flow 5 evaluation API contract', () => {
   beforeEach(() => request.mockReset())
@@ -58,6 +58,21 @@ describe('Flow 5 evaluation API contract', () => {
     expect(experiment.progress).toBe(40)
     expect(experiment.benchmarkProfile).toEqual({
       questionCount: 50, batchSize: 4, maxInputTokens: 448, maxNewTokens: 64,
+    })
+  })
+
+  it('sends explicit consent when Admin runs an unverified adapter', async () => {
+    request.mockResolvedValue({
+      experimentId: 'experiment-1',
+      experimentType: 'FINE_TUNED',
+      status: 'QUEUED',
+    })
+
+    await runBenchmark('experiment-1', { allowUnverifiedModel: true })
+
+    expect(request).toHaveBeenCalledWith('/evaluation/experiments/experiment-1/run', {
+      method: 'POST',
+      body: JSON.stringify({ allowUnverifiedModel: true }),
     })
   })
 })

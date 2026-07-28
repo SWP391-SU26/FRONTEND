@@ -75,8 +75,11 @@ export async function createExperiment(payload) {
   }))
 }
 
-export async function runBenchmark(experimentId) {
-  return toUiExperiment(await request(`/evaluation/experiments/${experimentId}/run`, { method: 'POST' }))
+export async function runBenchmark(experimentId, { allowUnverifiedModel = false } = {}) {
+  return toUiExperiment(await request(`/evaluation/experiments/${experimentId}/run`, {
+    method: 'POST',
+    body: JSON.stringify({ allowUnverifiedModel }),
+  }))
 }
 
 export async function cancelBenchmark(experimentId) {
@@ -194,6 +197,8 @@ function toUiExperiment(experiment) {
     llmModel: experiment.llmModel,
     configJson: experiment.configJson,
     benchmarkProfile: parsedConfig.benchmarkProfile ?? null,
+    modelVerificationStatus: parsedConfig.modelVerificationStatus ?? null,
+    allowUnverifiedModel: Boolean(parsedConfig.allowUnverifiedModel),
     status: experiment.status || 'PENDING',
     progress: Number(experiment.progress ?? 0),
     successCount: Number(experiment.successCount ?? 0),
@@ -222,8 +227,24 @@ function toUiExperimentResult(result) {
     answerRelevance: result.answerRelevance,
     contextPrecision: result.contextPrecision,
     contextRecall: result.contextRecall,
-    answerCorrectness: result.answerCorrectness,
-    semanticSimilarity: result.semanticSimilarity,
+    tokenOverlapProxy: result.answerCorrectness,
+    providerUsed: result.providerUsed,
+    baseModel: result.baseModel,
+    adapterVersion: result.adapterVersion,
+    embeddingModel: result.embeddingModel,
+    generationMode: result.generationMode,
+    datasetVersion: result.datasetVersion,
+    promptVersion: result.promptVersion,
+    metricStandard: result.metricStandard,
+    judgeModel: result.judgeModel,
+    evaluatorEmbedding: result.evaluatorEmbedding,
+    sourceHit: result.sourceHit,
+    pageHit: result.pageHit,
+    refusalCorrect: result.refusalCorrect,
+    throughputQps: result.throughputQps,
+    peakVramBytes: result.peakVramBytes,
+    modelVerificationStatus: result.modelVerificationStatus,
+    qualityGatePassed: result.qualityGatePassed,
     latencyMs: result.latencyMs,
     batchLatencyMs: result.batchLatencyMs,
     effectiveLatencyMs: result.effectiveLatencyMs ?? result.latencyMs,

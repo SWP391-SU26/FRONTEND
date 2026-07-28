@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { BentoCard, Button, ConfirmModal, EmptyState, Field, Panel, StatusBadge } from '../components/ui.jsx'
+import StudentShell from '../components/StudentShell.jsx'
 import {
   getDocument,
   getDocumentChunks,
@@ -28,6 +29,14 @@ import { deleteFile } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
 
 function DocumentDetailPage() {
+  return (
+    <StudentShell mobileTitle="Chi tiết tài liệu">
+      <DocumentDetailContent />
+    </StudentShell>
+  )
+}
+
+function DocumentDetailContent() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -205,7 +214,7 @@ function DocumentDetailPage() {
   }
 
   return (
-    <div className="space-y-6 min-h-[calc(100vh-4rem)] pb-12">
+    <div className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {/* HEADER / NAVIGATION */}
       <div className="flex items-center justify-between">
         <Link

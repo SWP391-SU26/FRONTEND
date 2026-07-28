@@ -325,7 +325,7 @@ export function PreflightLaunchStep({
 
   const isPending = selectedExperiment.status === 'PENDING'
   const isActive = ['QUEUED', 'RUNNING'].includes(selectedExperiment.status)
-  const launchReady = Boolean(readiness?.ready) && isPending
+  const launchReady = Boolean(readiness?.ready || readiness?.benchmarkReady) && isPending
 
   return (
     <StepPanel
@@ -354,7 +354,8 @@ export function PreflightLaunchStep({
           {!loadingReadiness && (readiness?.checks ?? []).map((check) => <ReadinessCheck check={check} key={check.code} />)}
           {!loadingReadiness && !readiness ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">Readiness is unavailable. Refresh this step before launching a benchmark.</div> : null}
         </div>
-        <p className="mt-4 text-xs leading-5 text-slate-500">Metrics are transparent local proxies, not official RAGAS. Context and citation metrics do not apply to Fine-tuned runs.</p>
+        {readiness?.requiresUnverifiedAcknowledgement ? <InlineNotice tone="warning"><strong className="block">RESEARCH ONLY / UNVERIFIED</strong>The adapter has not passed its quality gate. This run is allowed for research comparison and all results will retain the UNVERIFIED label.</InlineNotice> : null}
+        <p className="mt-4 text-xs leading-5 text-slate-500">Faithfulness, answer relevancy, context precision, and context recall use official RAGAS evaluation. Token overlap remains an internal proxy; context metrics do not apply to Fine-tuned-only runs.</p>
       </section>
 
       <div className="mt-6 flex flex-wrap gap-2">
@@ -452,8 +453,8 @@ function RunCard({ experiment, fallbackTotal, onCancel, onRerun, selected, submi
   const profile = experiment.benchmarkProfile
 
   return <article className={cn('p-4 sm:p-5', selected && 'bg-teal-50/45')}>
-    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-slate-950" title={experiment.name}>{experiment.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{experiment.method} / {experiment.llmModel}</p></div><StatusBadge status={statusForBadge(experiment.status)} /></div>
-    {active ? <div className="mt-4"><div className="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-slate-600"><span>{experiment.status === 'QUEUED' ? 'Queued for GPU' : `Processed ${processed}/${total || '?'}`}</span><span>{experiment.status === 'RUNNING' && eta != null ? `${experiment.progress}% / ETA ${formatDuration(eta)}` : `${experiment.progress}%`}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, experiment.progress))}%` }} /></div><p className="mt-2 text-xs font-medium text-slate-500">{profile ? `Full ${profile.questionCount} / Batch ${profile.batchSize} / ${profile.maxNewTokens} tokens` : 'Full benchmark / Batch 4 / 64 tokens'}</p></div> : null}
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-slate-950" title={experiment.name}>{experiment.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{experiment.method} / {experiment.llmModel}</p>{experiment.modelVerificationStatus === 'UNVERIFIED' ? <p className="mt-1 text-[11px] font-black text-amber-700">RESEARCH ONLY / UNVERIFIED</p> : null}</div><StatusBadge status={statusForBadge(experiment.status)} /></div>
+    {active ? <div className="mt-4"><div className="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-slate-600"><span>{experiment.status === 'QUEUED' ? 'Queued for GPU' : `Processed ${processed}/${total || '?'}`}</span><span>{experiment.status === 'RUNNING' && eta != null ? `${experiment.progress}% / ETA ${formatDuration(eta)}` : `${experiment.progress}%`}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, experiment.progress))}%` }} /></div><p className="mt-2 text-xs font-medium text-slate-500">{profile ? `Full ${profile.questionCount} / Batch ${profile.batchSize} / ${profile.maxNewTokens} tokens` : 'Full benchmark / Batch 1 / 192 tokens'}</p></div> : null}
     {experiment.status === 'PENDING' ? <p className="mt-3 text-sm font-medium text-sky-800">Ready to launch from Step 4.</p> : null}
     {experiment.status === 'QUEUED' ? <p className="mt-3 text-sm font-medium text-slate-700">Waiting for the current GPU job to finish.</p> : null}
     {experiment.status === 'CANCELLED' ? <p className="mt-3 text-sm font-medium text-slate-700">Cancelled at {experiment.progress}%. You can rerun it from the beginning.</p> : null}

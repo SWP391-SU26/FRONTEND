@@ -109,6 +109,115 @@ body:has(.workspace-fixed-page) {
   overflow: hidden;
 }
 
+.chat-shell-page {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+html:has(.chat-shell-page),
+body:has(.chat-shell-page) {
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.chat-shell-page button,
+.chat-shell-page a,
+.chat-shell-page input,
+.chat-shell-page textarea,
+.chat-shell-page select {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+}
+
+.chat-shell-page button:active {
+  transform: translateY(1px);
+}
+
+.chat-markdown {
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+.chat-markdown > * + * {
+  margin-top: 0.85rem;
+}
+
+.chat-markdown p {
+  margin: 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.75rem 0 0;
+  padding-left: 1.35rem;
+}
+
+.chat-markdown li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid rgb(226 232 240);
+  border-right: 1px solid rgb(226 232 240);
+  vertical-align: top;
+}
+
+.chat-markdown th {
+  background: rgb(248 250 252);
+  color: rgb(51 65 85);
+  font-weight: 700;
+}
+
+.chat-markdown blockquote {
+  margin: 0.85rem 0 0;
+  border-left: 3px solid rgb(20 184 166);
+  padding-left: 1rem;
+  color: rgb(71 85 105);
+}
+
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  background: rgb(15 23 42);
+  padding: 1rem;
+  color: rgb(226 232 240);
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+
+.chat-markdown :not(pre) > code {
+  border-radius: 0.35rem;
+  background: rgb(241 245 249);
+  padding: 0.1rem 0.35rem;
+  color: rgb(15 118 110);
+  font-size: 0.9em;
+}
+
+.chat-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.35rem;
+}
+
 .workspace-fixed-page {
   height: calc(100vh - 102px);
 }
@@ -1050,5 +1159,49 @@ a {
 
   .chart-tooltip {
     display: none !important;
+  }
+}
+@keyframes chat-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  50% {
+    transform: translateX(100%);
+  }
+
+  100% {
+    transform: translateX(310%);
+  }
+}
+
+.chat-progress-indicator {
+  animation: chat-progress 1.4s ease-in-out infinite;
+}
+
+.typewriter-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: #0f766e;
+  animation: typewriter-caret-blink 0.75s steps(1, end) infinite;
+}
+
+@keyframes typewriter-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-progress-indicator {
+    animation: none;
+    left: 33.333%;
+  }
+
+  .typewriter-caret {
+    animation: none;
   }
 }

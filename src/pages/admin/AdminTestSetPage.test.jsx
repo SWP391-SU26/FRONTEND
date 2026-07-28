@@ -34,6 +34,12 @@ vi.mock('../../services/evaluationService.js', () => ({
     id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG', experimentType: 'RAG',
     llmModel: 'qwen-rag-lora', status: 'CANCELLED', progress: 35, successCount: 1, failureCount: 0,
   }),
+  runBenchmark: vi.fn().mockResolvedValue({
+    id: 'experiment-1', datasetId: 'dataset-1', name: 'Fine baseline', method: 'Fine-tuned',
+    experimentType: 'FINE_TUNED', llmModel: 'Qwen/Qwen2.5-1.5B-Instruct',
+    status: 'QUEUED', progress: 0, successCount: 0, failureCount: 0,
+    modelVerificationStatus: 'UNVERIFIED',
+  }),
   waitForExperiment: vi.fn(() => new Promise(() => {})),
 }))
 
@@ -142,4 +148,30 @@ it('shows a queued benchmark profile and allows cancellation before GPU executio
   fireEvent.click(screen.getByRole('button', { name: 'Cancel run' }))
 
   await waitFor(() => expect(evaluationService.cancelBenchmark).toHaveBeenCalledWith('experiment-1'))
+})
+
+it('runs an eligible unverified fine-tuned adapter as research only', async () => {
+  evaluationService.getExperiments.mockResolvedValueOnce([{
+    id: 'experiment-1', datasetId: 'dataset-1', name: 'Fine baseline', method: 'Fine-tuned',
+    experimentType: 'FINE_TUNED', llmModel: 'Qwen/Qwen2.5-1.5B-Instruct',
+    status: 'PENDING', progress: 0, successCount: 0, failureCount: 0,
+  }])
+  evaluationService.getReadiness.mockResolvedValue({
+    ready: false,
+    benchmarkReady: true,
+    requiresUnverifiedAcknowledgement: true,
+    modelVerificationStatus: 'UNVERIFIED',
+    checks: [{ code: 'model', passed: false, message: 'Quality gate failed.' }],
+    blockers: [{ code: 'model', message: 'Quality gate failed.' }],
+  })
+  render(<AdminTestSetPage />)
+
+  await openStep('Review and launch')
+  expect(await screen.findByText('RESEARCH ONLY / UNVERIFIED')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }))
+
+  await waitFor(() => expect(evaluationService.runBenchmark).toHaveBeenCalledWith(
+    'experiment-1',
+    { allowUnverifiedModel: true },
+  ))
 })

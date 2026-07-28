@@ -30,7 +30,7 @@ export function AdminTestSetPage() {
   const [lastCreatedSnapshot, setLastCreatedSnapshot] = useState(null)
   const [experimentName, setExperimentName] = useState('')
   const [experimentType, setExperimentType] = useState('RAG')
-  const [llmModel, setLlmModel] = useState('qwen-rag-lora')
+  const [llmModel, setLlmModel] = useState('Qwen/Qwen2.5-1.5B-Instruct')
   const [questionText, setQuestionText] = useState('')
   const [groundTruth, setGroundTruth] = useState('')
   const [readiness, setReadiness] = useState(null)
@@ -276,11 +276,18 @@ export function AdminTestSetPage() {
     await submit(async () => {
       const currentReadiness = await evaluationService.getReadiness(selectedDatasetId, experiment.experimentType)
       setReadiness(currentReadiness)
-      if (!currentReadiness.ready) throw new Error(currentReadiness.blockers.map((item) => item.message).join(' '))
-      const running = await evaluationService.runBenchmark(experiment.id)
+      const needsAcknowledgement = Boolean(currentReadiness.requiresUnverifiedAcknowledgement)
+      if (!currentReadiness.ready && !currentReadiness.benchmarkReady) {
+        throw new Error(currentReadiness.blockers.map((item) => item.message).join(' '))
+      }
+      const running = await evaluationService.runBenchmark(experiment.id, {
+        allowUnverifiedModel: needsAcknowledgement,
+      })
       updateExperiment(running)
       setSelectedExperimentId(running.id)
-      setNotice(running.status === 'QUEUED' ? 'Benchmark queued. It will start automatically when the GPU is available.' : 'Benchmark started in the backend. You can safely leave this page while it runs.')
+      setNotice(running.status === 'QUEUED'
+        ? `Benchmark queued${needsAcknowledgement ? ' as RESEARCH ONLY / UNVERIFIED' : ''}. It will start automatically when the GPU is available.`
+        : 'Benchmark started in the backend. You can safely leave this page while it runs.')
       setActiveStep(5)
     })
   }

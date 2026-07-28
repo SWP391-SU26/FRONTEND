@@ -153,11 +153,16 @@ export function toUiDocument(document) {
   const canManage = explicitPermission !== undefined
     ? Boolean(explicitPermission)
     : Boolean(isAdminSession() || document.uploadedBy === currentUserId)
-  const uploadedAt = document.uploadedAt || document.createdAt
-    ? new Date(document.uploadedAt ?? document.createdAt).toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric',
+  const uploadedAtValue = document.uploadedAt ?? document.createdAt ?? null
+  const uploadedAtDate = uploadedAtValue ? new Date(uploadedAtValue) : null
+  const uploadedAtTimestamp = uploadedAtDate && !Number.isNaN(uploadedAtDate.getTime())
+    ? uploadedAtDate.getTime()
+    : 0
+  const uploadedAt = uploadedAtTimestamp
+    ? uploadedAtDate.toLocaleDateString('vi-VN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
       })
-    : '-'
+    : 'Chưa rõ'
 
   return {
     id: document.documentId,
@@ -171,12 +176,14 @@ export function toUiDocument(document) {
     embeddedChunks: embeddedChunkCount,
     embeddingModel: document.embeddingModel?.modelName ?? document.embeddingModelName ?? 'Not indexed',
     uploadedAt,
+    uploadedAtIso: uploadedAtTimestamp ? uploadedAtDate.toISOString() : null,
+    uploadedAtTimestamp,
     pages: document.totalPages ?? 0,
     workspaceId: document.workspaceId,
     courseId: document.courseId,
     chapterId: document.chapterId ?? null,
     uploadedBy: document.uploadedBy,
-    uploaderName: document.uploaderName ?? '',
+    uploaderName: document.uploaderName?.trim() || 'Không rõ người đăng',
     canEdit: canManage,
     canDelete: canManage,
     documentScope: document.documentScope ?? (document.courseId ? 'COURSE' : 'PERSONAL'),

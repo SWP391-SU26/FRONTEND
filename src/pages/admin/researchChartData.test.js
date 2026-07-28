@@ -6,10 +6,10 @@ import {
 
 describe('research chart transformations', () => {
   const rows = [
-    { questionId: 'rag', question: 'RAG wins', ragAnswerCorrectness: 0.8, fineTunedAnswerCorrectness: 0.2, answerCorrectnessDelta: -0.6 },
-    { questionId: 'fine', question: 'Fine wins', ragAnswerCorrectness: 0.2, fineTunedAnswerCorrectness: 0.7, answerCorrectnessDelta: 0.5 },
-    { questionId: 'tie', question: 'Tie', ragAnswerCorrectness: 0.5, fineTunedAnswerCorrectness: 0.51, answerCorrectnessDelta: 0.01 },
-    { questionId: 'error', question: 'Error', ragAnswerCorrectness: 0.3, fineTunedAnswerCorrectness: 0.3, answerCorrectnessDelta: 0, ragError: 'timeout' },
+    { questionId: 'rag', question: 'RAG wins', ragTokenOverlapProxy: 0.8, fineTunedTokenOverlapProxy: 0.2, tokenOverlapProxyDelta: -0.6 },
+    { questionId: 'fine', question: 'Fine wins', ragTokenOverlapProxy: 0.2, fineTunedTokenOverlapProxy: 0.7, tokenOverlapProxyDelta: 0.5 },
+    { questionId: 'tie', question: 'Tie', ragTokenOverlapProxy: 0.5, fineTunedTokenOverlapProxy: 0.51, tokenOverlapProxyDelta: 0.01 },
+    { questionId: 'error', question: 'Error', ragTokenOverlapProxy: 0.3, fineTunedTokenOverlapProxy: 0.3, tokenOverlapProxyDelta: 0, ragError: 'timeout' },
   ]
 
   it('counts RAG, Fine-tuned, near-equivalent and error outcomes exactly', () => {

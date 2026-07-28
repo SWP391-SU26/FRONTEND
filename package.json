@@ -14,11 +14,16 @@
   "dependencies": {
     "@tailwindcss/vite": "latest",
     "framer-motion": "^12.40.0",
+    "katex": "^0.18.1",
     "lucide-react": "^1.17.0",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.16.0",
     "recharts": "3.9.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "tailwindcss": "latest"
   },
   "devDependencies": {

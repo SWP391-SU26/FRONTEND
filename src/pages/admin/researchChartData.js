@@ -4,9 +4,8 @@ export function buildQualityChartData(comparison) {
   const rag = comparison?.ragExperiment ?? {}
   const fine = comparison?.fineTunedExperiment ?? {}
   return [
-    metricRow('Correctness', rag.answerCorrectness, fine.answerCorrectness),
-    metricRow('Relevance', rag.answerRelevance, fine.answerRelevance),
-    metricRow('Similarity', rag.semanticSimilarity, fine.semanticSimilarity),
+    metricRow('Token overlap (proxy)', rag.tokenOverlapProxy, fine.tokenOverlapProxy),
+    metricRow('Mức liên quan', rag.answerRelevance, fine.answerRelevance),
   ]
 }
 
@@ -29,14 +28,14 @@ export function buildOutcomeChartData(rows = []) {
 
 export function buildScatterChartData(rows = []) {
   const points = rows.filter((row) => !row.ragError && !row.fineTunedError
-      && isFiniteNumber(row.ragAnswerCorrectness) && isFiniteNumber(row.fineTunedAnswerCorrectness))
+      && isFiniteNumber(row.ragTokenOverlapProxy) && isFiniteNumber(row.fineTunedTokenOverlapProxy))
     .map((row, index) => ({
       id: row.questionId,
       index: index + 1,
       question: row.question,
-      rag: round(row.ragAnswerCorrectness * 100),
-      fine: round(row.fineTunedAnswerCorrectness * 100),
-      delta: round((row.fineTunedAnswerCorrectness - row.ragAnswerCorrectness) * 100),
+      rag: round(row.ragTokenOverlapProxy * 100),
+      fine: round(row.fineTunedTokenOverlapProxy * 100),
+      delta: round((row.fineTunedTokenOverlapProxy - row.ragTokenOverlapProxy) * 100),
     }))
   return { points, omittedCount: rows.length - points.length }
 }
@@ -54,8 +53,8 @@ export function buildDashboardKpis(comparison) {
   const total = comparison?.dataset?.questionCount ?? comparison?.perQuestion?.length ?? 0
   const ragValid = safeNumber(rag.successCount)
   const fineValid = safeNumber(fine.successCount)
-  const qualityDelta = isFiniteNumber(rag.answerCorrectness) && isFiniteNumber(fine.answerCorrectness)
-    ? fine.answerCorrectness - rag.answerCorrectness : null
+  const qualityDelta = isFiniteNumber(rag.tokenOverlapProxy) && isFiniteNumber(fine.tokenOverlapProxy)
+    ? fine.tokenOverlapProxy - rag.tokenOverlapProxy : null
   const latencyDelta = isFiniteNumber(rag.latencyMs) && isFiniteNumber(fine.latencyMs) && Math.max(rag.latencyMs, fine.latencyMs) > 0
     ? 1 - Math.min(rag.latencyMs, fine.latencyMs) / Math.max(rag.latencyMs, fine.latencyMs) : null
   return {
@@ -69,7 +68,7 @@ export function buildDashboardKpis(comparison) {
 
 export function classifyOutcome(row) {
   if (row?.ragError || row?.fineTunedError) return 'error'
-  const delta = row?.answerCorrectnessDelta
+  const delta = row?.tokenOverlapProxyDelta
   if (!isFiniteNumber(delta) || Math.abs(delta) < TIE_THRESHOLD) return 'tie'
   return delta > 0 ? 'fine' : 'rag'
 }
