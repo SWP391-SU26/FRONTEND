@@ -12,6 +12,15 @@ import {
 import { cn } from '../utils/cn.js'
 
 const statusStyles = {
+  Healthy: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Inactive: 'border-slate-300 bg-slate-100 text-slate-700',
+  Attention: 'border-red-200 bg-red-50 text-red-700',
+  Info: 'border-sky-200 bg-sky-50 text-sky-700',
+  Unavailable: 'border-slate-200 bg-slate-100 text-slate-600',
+  Completed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  Retrieved: 'border-teal-200 bg-teal-50 text-teal-700',
+  'Not answerable': 'border-slate-200 bg-slate-50 text-slate-700',
   Indexed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   Processed: 'border-teal-200 bg-teal-50 text-teal-700',
   Prepared: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -27,6 +36,15 @@ const statusStyles = {
 }
 
 const statusIcons = {
+  Healthy: CheckCircle2,
+  Active: CheckCircle2,
+  Inactive: XCircle,
+  Attention: AlertTriangle,
+  Info: Clock3,
+  Unavailable: FileArchive,
+  Completed: CheckCircle2,
+  Retrieved: CheckCircle2,
+  'Not answerable': AlertTriangle,
   Indexed: CheckCircle2,
   Processed: CheckCircle2,
   Prepared: CheckCircle2,
@@ -110,7 +128,7 @@ export function IconButton({ label, children, className, ...props }) {
   )
 }
 
-export function StatusBadge({ status }) {
+export function StatusBadge({ className, status }) {
   const Icon = statusIcons[status] ?? FileArchive
 
   return (
@@ -118,6 +136,7 @@ export function StatusBadge({ status }) {
       className={cn(
         'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-semibold shadow-sm',
         statusStyles[status] ?? 'border-slate-200 bg-slate-50 text-slate-600',
+        className,
       )}
       initial={{ scale: 0.94, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
@@ -230,10 +249,13 @@ export function ConfirmModal({
         }}
       >
         <motion.div
+          aria-label={title}
+          aria-modal="true"
           className="os-panel w-full max-w-md p-5 shadow-2xl"
           initial={{ opacity: 0, y: 30, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 16, scale: 0.98 }}
+          role="dialog"
           transition={{ type: 'spring', stiffness: 360, damping: 30 }}
         >
           <div className="flex items-start justify-between gap-4">

@@ -29,6 +29,6 @@ describe('research chart transformations', () => {
   it('never produces NaN when latency or summary metrics are missing', () => {
     const comparison = { dataset: { questionCount: 50 }, ragExperiment: { successCount: 4, latencyMs: undefined }, fineTunedExperiment: { successCount: 3, latencyMs: Number.NaN } }
     expect(buildLatencyChartData(comparison)).toEqual([{ model: 'RAG', latency: 0 }, { model: 'Fine-tuned', latency: 0 }])
-    expect(buildDashboardKpis(comparison)).toMatchObject({ qualityLabel: 'Chưa đủ dữ liệu', latencyLabel: 'Chưa đủ dữ liệu' })
+    expect(buildDashboardKpis(comparison)).toMatchObject({ qualityLabel: 'Insufficient data', latencyLabel: 'Insufficient data' })
   })
 })

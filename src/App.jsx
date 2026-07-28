@@ -23,9 +23,7 @@ import { UploadProgressPopup } from './components/UploadProgressPopup.jsx'
 import {
   getDefaultRouteForUser,
   getSavedUser,
-  hasRole,
   isAdminSession,
-  isResearcherSession,
   isAuthenticated,
 } from './services/authService.js'
 
@@ -49,7 +47,7 @@ function App() {
       <Route element={<PublicOnly><ResetPasswordPage /></PublicOnly>} path="/reset-password" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/settings" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/profile" />
-      <Route element={<RequireFlow5Role><AdminLayout /></RequireFlow5Role>} path="/admin">
+      <Route element={<RequireAdmin><AdminLayout /></RequireAdmin>} path="/admin">
         <Route index element={<AdminIndex />} />
         <Route path="dashboard" element={<RequireAdmin><AdminDashboardPage /></RequireAdmin>} />
         <Route path="users" element={<RequireAdmin><AdminUsersPage /></RequireAdmin>} />
@@ -128,14 +126,8 @@ function RequireAdmin({ children }) {
   return children
 }
 
-function RequireFlow5Role({ children }) {
-  if (!isAuthenticated()) return <Navigate replace to="/login" />
-  if (!isAdminSession() && !isResearcherSession()) return <Navigate replace to="/workspace" />
-  return children
-}
-
 function AdminIndex() {
-  return <Navigate replace to={hasRole(getSavedUser(), 'ADMIN') ? '/admin/dashboard' : '/admin/test-set'} />
+  return <Navigate replace to="/admin/dashboard" />
 }
 
 export default App

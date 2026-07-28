@@ -38,17 +38,16 @@ import { AdminResearchDashboardPage, buildComparisonCsv, buildResearchConclusion
 
 beforeEach(() => vi.clearAllMocks())
 
-it('renders a plain-language RBL conclusion and transparent local proxy warning', async () => {
+it('renders a plain-language RBL conclusion and transparent local-proxy warning', async () => {
   render(<AdminResearchDashboardPage />)
 
-  expect(await screen.findByText('Kết luận thực nghiệm')).toBeInTheDocument()
-  expect(screen.getByText(/Fine-tuned khớp ground truth cao hơn 15 điểm phần trăm/)).toBeInTheDocument()
-  expect(screen.getByText(/Fine-tuned trả lời nhanh hơn khoảng 44%/)).toBeInTheDocument()
-  expect(screen.getByText(/đây là local proxy, không phải official RAGAS/i)).toBeInTheDocument()
-  expect(screen.getAllByText(/Không áp dụng/).length).toBeGreaterThanOrEqual(3)
-  expect(await screen.findByRole('heading', { name: 'Kết quả trực quan trên cùng dataset snapshot' }, { timeout: 5000 })).toBeInTheDocument()
-  expect(screen.getByText('Fine-tuned +15 điểm %')).toBeInTheDocument()
-  const grounding = screen.getByRole('figure', { name: /Độ tin cậy nguồn RAG/i })
+  expect(await screen.findByText('Experimental conclusion')).toBeInTheDocument()
+  expect(screen.getByText(/Fine-tuned matches the ground truth 15 percentage points more closely/)).toBeInTheDocument()
+  expect(screen.getByText(/Fine-tuned responds about 44% faster/)).toBeInTheDocument()
+  expect(screen.getAllByText(/Not applicable/).length).toBeGreaterThanOrEqual(3)
+  expect(await screen.findByRole('heading', { name: 'Visual results on the same dataset snapshot' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getByText('Fine-tuned +15 pp')).toBeInTheDocument()
+  const grounding = screen.getByRole('figure', { name: /RAG source grounding/i })
   expect(within(grounding).queryByRole('columnheader', { name: /Fine-tuned/i })).not.toBeInTheDocument()
   expect(evaluationService.getComparison).toHaveBeenCalledWith({ datasetId: 'dataset-1', ragExperimentId: 'rag-1', fineTunedExperimentId: 'fine-1' })
 })
@@ -57,17 +56,17 @@ it('filters question rows by winner and expands evidence without relying on colo
   render(<AdminResearchDashboardPage />)
   await screen.findByText('Triết học là gì?')
 
-  fireEvent.change(screen.getByLabelText('Lọc kết quả'), { target: { value: 'RAG' } })
+  fireEvent.change(screen.getByLabelText('Filter results'), { target: { value: 'RAG' } })
   expect(screen.queryByText('Triết học là gì?')).not.toBeInTheDocument()
   fireEvent.click(screen.getByText('Nguồn gốc nhận thức?'))
-  expect(screen.getByText('Đáp án chuẩn')).toBeInTheDocument()
+  expect(screen.getByText('Ground truth')).toBeInTheDocument()
   expect(screen.getAllByText('Thực tiễn.')).toHaveLength(2)
 })
 
 describe('report helpers', () => {
   it('describes differences below two percentage points as near-equivalent', () => {
     const result = buildResearchConclusions({ ...comparison, ragExperiment: { ...comparison.ragExperiment, answerCorrectness: 0.50 }, fineTunedExperiment: { ...comparison.fineTunedExperiment, answerCorrectness: 0.51 } })
-    expect(result[0]).toMatch(/gần tương đương/)
+    expect(result[0]).toMatch(/near-equivalent/)
   })
 
   it('exports UTF-8 BOM, complete headers and exactly 50 data rows', () => {

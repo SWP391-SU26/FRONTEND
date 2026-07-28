@@ -16,15 +16,8 @@ vi.mock('../../services/evaluationService.js', () => ({
   ]),
   getExperiments: vi.fn().mockResolvedValue([
     {
-      id: 'experiment-1',
-      datasetId: 'dataset-1',
-      name: 'RAG baseline',
-      method: 'RAG',
-      experimentType: 'RAG',
-      llmModel: 'qwen-rag-lora',
-      status: 'PENDING',
-      successCount: 0,
-      failureCount: 0,
+      id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG', experimentType: 'RAG',
+      llmModel: 'qwen-rag-lora', status: 'PENDING', successCount: 0, failureCount: 0,
     },
   ]),
   getQuestions: vi.fn().mockResolvedValue([{ id: 'q-1', questionText: 'What is RAG?', groundTruthAnswer: 'Retrieval augmented generation.' }]),
@@ -36,7 +29,7 @@ vi.mock('../../services/evaluationService.js', () => ({
     ],
     blockers: [{ code: 'model', message: 'Strict RAG model is not ready.' }],
   }),
-  createDataset: vi.fn().mockResolvedValue({ id: 'dataset-2', name: 'SU2026 MLN123 benchmark', status: 'DRAFT' }),
+  createDataset: vi.fn().mockResolvedValue({ id: 'dataset-2', name: 'SU2026 MLN123 benchmark', status: 'DRAFT', documentIds: ['doc-1'] }),
   cancelBenchmark: vi.fn().mockResolvedValue({
     id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG', experimentType: 'RAG',
     llmModel: 'qwen-rag-lora', status: 'CANCELLED', progress: 35, successCount: 1, failureCount: 0,
@@ -53,40 +46,51 @@ beforeEach(() => {
   URL.revokeObjectURL = vi.fn()
 })
 
-it('shows Semester/Course document selection and actionable readiness blockers', async () => {
+async function openStep(name) {
+  const button = await screen.findByRole('button', { name: new RegExp(name, 'i') })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+}
+
+it('shows the five-step workflow and keeps document selection in the dataset snapshot step', async () => {
   render(<AdminTestSetPage />)
 
-  expect(await screen.findByText('1. Dataset snapshot')).toBeInTheDocument()
+  expect(await screen.findByRole('navigation', { name: 'Benchmark workflow' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Dataset snapshot/i })).toHaveAttribute('aria-current', 'step')
+  expect(await screen.findByRole('heading', { name: 'Dataset snapshot' })).toBeInTheDocument()
   expect(await screen.findByText('Lecture.pdf')).toBeInTheDocument()
-  expect(await screen.findByText('Strict RAG model is not ready.')).toBeInTheDocument()
-  expect(screen.queryByText(/workspace id/i)).not.toBeInTheDocument()
+  expect(screen.getByText('1 selected')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Monitor runs/i })).toBeDisabled()
 })
 
-it('keeps the dataset name visible after snapshot creation and confirms success inline', async () => {
+it('moves to Ground truth after snapshot creation and confirms the selected snapshot', async () => {
   render(<AdminTestSetPage />)
   const nameInput = await screen.findByPlaceholderText('Example: SU2026 MLN123 benchmark')
   fireEvent.change(nameInput, { target: { value: 'SU2026 MLN123 benchmark' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create snapshot' }))
 
-  await waitFor(() => expect(screen.getByText('Snapshot created successfully')).toBeInTheDocument())
-  expect(nameInput).toHaveValue('SU2026 MLN123 benchmark')
-  expect(screen.getByRole('button', { name: 'Snapshot created' })).toBeDisabled()
+  expect(await screen.findByRole('status')).toHaveTextContent('Dataset snapshot "SU2026 MLN123 benchmark" created successfully.')
+  expect(await screen.findByRole('heading', { name: 'Ground truth' })).toBeInTheDocument()
+  expect(screen.getAllByText('SU2026 MLN123 benchmark')).toHaveLength(2)
 })
 
-it('presents pending experiments as ready to run and bounds the question list', async () => {
+it('keeps questions bounded in Step 2 and gates launch behind backend readiness in Step 4', async () => {
   render(<AdminTestSetPage />)
 
-  expect(await screen.findByText('Ready to run')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeEnabled()
+  await openStep('Ground truth')
   expect(screen.getByTestId('benchmark-question-list')).toHaveClass('max-h-[420px]', 'overflow-y-auto')
+
+  await openStep('Review and launch')
+  expect(await screen.findByText('Strict RAG model is not ready.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Run benchmark' })).toBeDisabled()
 })
 
-it('exports the selected test set and ground truth as JSON', async () => {
+it('exports the selected test set and ground truth as JSON from Step 2', async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
   render(<AdminTestSetPage />)
 
+  await openStep('Ground truth')
   const exportButton = await screen.findByRole('button', { name: 'Export JSON' })
-  await waitFor(() => expect(exportButton).toBeEnabled())
   fireEvent.click(exportButton)
 
   expect(URL.createObjectURL).toHaveBeenCalledOnce()
@@ -107,17 +111,18 @@ it('exports the selected test set and ground truth as JSON', async () => {
   click.mockRestore()
 })
 
-it('allows a running benchmark to be cancelled and keeps partial progress', async () => {
+it('allows a running benchmark to be cancelled from Step 5 and keeps partial progress', async () => {
   evaluationService.getExperiments.mockResolvedValueOnce([{
     id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG', experimentType: 'RAG',
     llmModel: 'qwen-rag-lora', status: 'RUNNING', progress: 35, successCount: 1, failureCount: 0,
   }])
   render(<AdminTestSetPage />)
 
+  await openStep('Monitor runs')
   fireEvent.click(await screen.findByRole('button', { name: 'Cancel run' }))
 
   await waitFor(() => expect(evaluationService.cancelBenchmark).toHaveBeenCalledWith('experiment-1'))
-  expect(await screen.findByText('Cancelled')).toBeInTheDocument()
+  expect(await screen.findAllByText('Cancelled')).toHaveLength(2)
   expect(screen.getByText('Cancelled at 35%. You can rerun it from the beginning.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Rerun' })).toBeEnabled()
 })
@@ -131,8 +136,9 @@ it('shows a queued benchmark profile and allows cancellation before GPU executio
   }])
   render(<AdminTestSetPage />)
 
-  expect(await screen.findByText('Queued')).toBeInTheDocument()
-  expect(screen.getByText('Full 50 · Batch 4 · 64 tokens')).toBeInTheDocument()
+  await openStep('Monitor runs')
+  expect(await screen.findAllByText('Queued')).toHaveLength(2)
+  expect(screen.getByText('Full 50 / Batch 4 / 64 tokens')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Cancel run' }))
 
   await waitFor(() => expect(evaluationService.cancelBenchmark).toHaveBeenCalledWith('experiment-1'))

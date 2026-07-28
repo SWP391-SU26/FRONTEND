@@ -8,7 +8,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',
     clearMocks: true,
-    exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],
+    exclude: ['tests/e2e/**', '**/node_modules/**', 'dist/**'],
   },
   server: {
     port: 5173,

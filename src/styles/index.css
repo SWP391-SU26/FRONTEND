@@ -839,6 +839,31 @@ a {
 }
 
 /* Research report */
+.research-select-menu > div {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(45 212 191 / 0.7) transparent;
+}
+
+.research-select-menu > div::-webkit-scrollbar {
+  width: 0.45rem;
+}
+
+.research-select-menu > div::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.research-select-menu > div::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgb(94 234 212 / 0.8);
+  background-clip: padding-box;
+}
+
+.research-select-menu > div::-webkit-scrollbar-thumb:hover {
+  background: rgb(20 184 166 / 0.9);
+  background-clip: padding-box;
+}
+
 .research-report {
   max-width: 1280px;
   margin-inline: auto;

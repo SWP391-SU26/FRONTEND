@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
+import { createPortal } from 'react-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   BarChart3,
   BookOpen,
   Brain,
@@ -13,12 +16,15 @@ import {
   HardDrive,
   Loader2,
   LineChart,
+  Plus,
   RefreshCcw,
   Search,
   ServerCog,
   ShieldCheck,
   Trash2,
+  Upload,
   Check,
+  ChevronDown,
   Eye,
   X,
   Users,
@@ -26,8 +32,6 @@ import {
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -44,14 +48,21 @@ import {
   SelectField,
   StatusBadge,
 } from '../../components/ui.jsx'
-import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
-import { deleteUser, getSavedUser, getUsers, updateUserRole } from '../../services/authService.js'
-import { getCourses, getSemesterWorkspaces } from '../../services/courseService.js'
+import { AdminPageHeader, useAdminOperationalHealth } from '../../layouts/AdminLayout.jsx'
 import {
-  getDocumentPreviewUrl, getDocuments, getReviewQueue, reindexDocument,
-  reviewDocument, waitForIndexingJob,
+  ADMIN_ROLE,
+  STUDENT_ROLE,
+  deleteUser,
+  getSavedUser,
+  getUsers,
+  normalizeRoles,
+  updateUserRole,
+} from '../../services/authService.js'
+import { getChapters, getCourses, getSemesterWorkspaces } from '../../services/courseService.js'
+import {
+  getDocumentPreviewUrl, getDocuments, reindexDocument, waitForIndexingJob,
 } from '../../services/documentService.js'
-import { deleteFile } from '../../services/uploadService.js'
+import { deleteFile, uploadFiles } from '../../services/uploadService.js'
 import {
   getExperimentResults,
   getExperiments,
@@ -64,7 +75,13 @@ import {
 } from '../../services/adminDashboardService.js'
 
 const allOption = 'All'
-const roles = ['ADMIN', 'TEACHER', 'STUDENT', 'RESEARCHER', 'USER']
+const roles = [ADMIN_ROLE, STUDENT_ROLE]
+const dashboardPeriods = [7, 14, 30, 90]
+const activityMetrics = {
+  retrievals: { key: 'retrievals', label: 'Retrievals', color: '#0f766e' },
+  uploads: { key: 'uploads', label: 'Uploads', color: '#0f766e' },
+  experiments: { key: 'experiments', label: 'Experiments', color: '#0f766e' },
+}
 
 function unwrapList(result) {
   return Array.isArray(result) ? result : (result?.data ?? [])
@@ -80,153 +97,207 @@ function statusForBadge(value) {
 }
 
 export function AdminDashboardPage() {
+  const { updateOperationalHealth } = useAdminOperationalHealth()
+  const [period, setPeriod] = useState(14)
+  const [activityMetric, setActivityMetric] = useState('retrievals')
+  const [reloadKey, setReloadKey] = useState(0)
   const [state, setState] = useState({
     loading: true,
-    error: '',
+    errors: {},
     summary: null,
     timeseries: null,
+    timeseriesPeriod: null,
     health: null,
+    updatedAt: null,
   })
-
-  async function loadDashboard() {
-    setState((current) => ({ ...current, loading: true, error: '' }))
-    try {
-      const [summary, timeseries, health] = await Promise.all([
-        getAdminDashboardSummary(),
-        getAdminDashboardTimeseries(14),
-        getAdminDashboardHealth(),
-      ])
-      setState({ loading: false, error: '', summary, timeseries, health })
-    } catch (requestError) {
-      setState((current) => ({ ...current, loading: false, error: requestError.message }))
-    }
-  }
 
   useEffect(() => {
     let active = true
-    Promise.all([
-      getAdminDashboardSummary(),
-      getAdminDashboardTimeseries(14),
-      getAdminDashboardHealth(),
-    ])
-      .then(([summary, timeseries, health]) => {
-        if (active) setState({ loading: false, error: '', summary, timeseries, health })
-      })
-      .catch((requestError) => {
-        if (active) setState((current) => ({ ...current, loading: false, error: requestError.message }))
-      })
+    async function loadDashboard() {
+      setState((current) => ({ ...current, loading: true, errors: {} }))
+      const [summaryResult, timeseriesResult, healthResult] = await Promise.allSettled([
+        getAdminDashboardSummary(),
+        getAdminDashboardTimeseries(period),
+        getAdminDashboardHealth(),
+      ])
+
+      if (!active) return
+
+      const summary = summaryResult.status === 'fulfilled' ? summaryResult.value : null
+      const timeseries = timeseriesResult.status === 'fulfilled' ? timeseriesResult.value : null
+      const health = healthResult.status === 'fulfilled' ? healthResult.value : null
+      const errors = {
+        summary: summaryResult.status === 'rejected' ? summaryResult.reason?.message || 'Could not load summary data.' : '',
+        timeseries: timeseriesResult.status === 'rejected' ? timeseriesResult.reason?.message || 'Could not load activity data.' : '',
+        health: healthResult.status === 'rejected' ? healthResult.reason?.message || 'Could not load operational alerts.' : '',
+      }
+
+      if (health) updateOperationalHealth(health)
+      setState((current) => ({
+        loading: false,
+        errors,
+        summary: summary ?? current.summary,
+        timeseries: timeseries ?? current.timeseries,
+        timeseriesPeriod: timeseries ? period : current.timeseriesPeriod,
+        health: health ?? current.health,
+        updatedAt: summary || timeseries || health ? new Date().toISOString() : current.updatedAt,
+      }))
+    }
+
+    loadDashboard()
     return () => {
       active = false
     }
-  }, [])
+  }, [period, reloadKey, updateOperationalHealth])
 
-  const summary = state.summary ?? {}
-  const totals = summary.totals ?? {}
-  const documents = summary.documents ?? {}
-  const experiments = summary.experiments ?? {}
-  const activity = summary.activity ?? {}
-  const chartData = (state.timeseries?.points ?? []).map((point) => ({
+  const summary = state.summary
+  const totals = summary?.totals ?? {}
+  const documents = summary?.documents ?? {}
+  const experiments = summary?.experiments ?? {}
+  const activity = summary?.activity ?? {}
+  const chartData = useMemo(() => (state.timeseries?.points ?? []).map((point) => ({
+    dateKey: point.date,
     date: formatShortDate(point.date),
+    fullDate: formatFullDate(point.date),
     uploads: Number(point.documentUploads ?? 0),
     retrievals: Number(point.retrievalQueries ?? 0),
     experiments: Number(point.experimentsCreated ?? 0),
-  }))
+  })), [state.timeseries])
+  const activityTotals = useMemo(() => chartData.reduce((accumulator, point) => ({
+    uploads: accumulator.uploads + point.uploads,
+    retrievals: accumulator.retrievals + point.retrievals,
+    experiments: accumulator.experiments + point.experiments,
+  }), { uploads: 0, retrievals: 0, experiments: 0 }), [chartData])
+  const selectedActivityMetric = activityMetrics[activityMetric]
+  const chartPeriod = state.timeseriesPeriod ?? period
+  const chartTickValues = useMemo(() => {
+    if (!chartData.length) return []
+    if (chartPeriod < 30) return chartData.map((point) => point.date)
+
+    if (chartPeriod === 30) {
+      const tickValues = chartData
+        .filter((_, index) => index % 3 === 0)
+        .map((point) => point.date)
+      const lastDate = chartData[chartData.length - 1]?.date
+
+      if (lastDate && tickValues[tickValues.length - 1] !== lastDate) {
+        tickValues.push(lastDate)
+      }
+
+      return tickValues
+    }
+
+    if (chartData.length <= 3) return chartData.map((point) => point.date)
+    return [chartData[0].date, chartData[Math.floor((chartData.length - 1) / 2)].date, chartData[chartData.length - 1].date]
+  }, [chartData, chartPeriod])
+  const showingStaleTimeseries = Boolean(state.timeseries && chartPeriod !== period)
   const healthItems = state.health?.items ?? []
+  const errorMessages = Object.values(state.errors).filter(Boolean)
+  const hasData = Boolean(summary || state.timeseries || state.health)
+  const initialLoading = state.loading && !hasData
+
+  const retryDashboard = () => setReloadKey((current) => current + 1)
 
   return (
     <div className="space-y-4">
       <AdminPageHeader
-        actions={<Button disabled={state.loading} onClick={loadDashboard} type="button" variant="secondary"><RefreshCcw className={state.loading ? 'animate-spin' : ''} size={15} />Refresh</Button>}
-        description="Operational overview from admin aggregate APIs."
+        actions={<div className="flex flex-wrap items-center justify-end gap-2"><span className="text-xs font-semibold text-slate-500">{state.updatedAt ? `Updated ${formatActivityTime(state.updatedAt)}` : 'Not updated yet'}</span><Button disabled={state.loading} onClick={retryDashboard} type="button" variant="secondary"><RefreshCcw className={state.loading ? 'animate-spin' : ''} size={15} />Refresh</Button></div>}
+        description="Monitor content intake, platform activity, and research operations from one place."
         icon={Gauge}
         title="Admin Dashboard"
       />
-      {state.error ? <Alert message={state.error} /> : null}
-      {state.loading ? <Loading label="Loading dashboard data" /> : (
+      {errorMessages.length ? <Alert action={<Button onClick={retryDashboard} size="sm" type="button" variant="secondary">Try again</Button>} message={hasData ? 'Some sections could not refresh. The dashboard is showing the last available data where possible.' : 'The dashboard data is unavailable right now.'} /> : null}
+      {initialLoading ? <DashboardSkeleton /> : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={Users} label="Users" value={formatNumber(totals.users)} />
-            <MetricCard icon={BookOpen} label="Courses" value={formatNumber(totals.courses)} />
-            <MetricCard icon={FileText} label="Documents" value={formatNumber(totals.documents)} />
-            <MetricCard icon={Database} label="Datasets" value={formatNumber(totals.datasets)} />
-          </div>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,.65fr)]">
+          {summary ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <MetricCard detail={`${formatNumber(totals.activeUsers)} active`} icon={Users} label="Users" linkTo="/admin/users" value={formatNumber(totals.users)} />
+            <MetricCard detail={`${formatNumber(totals.activeCourses)} active`} icon={BookOpen} label="Courses" linkTo="/admin/courses" value={formatNumber(totals.courses)} />
+            <MetricCard detail={`${formatNumber(documents.processed)} indexed`} icon={FileText} label="Documents" linkTo="/admin/documents" value={formatNumber(totals.documents)} />
+            <MetricCard detail={`${formatNumber(totals.experiments)} total experiments`} icon={Database} label="Test datasets" linkTo="/admin/test-set" value={formatNumber(totals.datasets)} />
+          </div> : <DataUnavailable description={state.errors.summary || 'Summary data is not available yet.'} title="Summary unavailable" />}
+
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,.65fr)]">
             <Panel className="overflow-hidden p-5">
               <div className="pointer-events-none absolute inset-x-0 top-0 z-0 h-24 bg-gradient-to-r from-teal-100/55 via-white/20 to-transparent" />
               <div className="relative z-10">
                 <div className="flex flex-wrap items-start justify-between gap-4">
-                  <SectionTitle icon={LineChart} title="Platform activity" subtitle="Uploads, retrievals, and experiments over the last 14 days." />
-                  <div className="grid grid-cols-3 gap-2 text-right">
-                    <MiniStat label="Retrievals" value={formatNumber(totals.retrievalQueries)} />
-                    <MiniStat label="Experiments" value={formatNumber(totals.experiments)} />
-                    <MiniStat label="Storage" value={formatBytes(documents.totalStorageBytes)} />
+                  <SectionTitle icon={LineChart} title="Platform activity" subtitle={`Daily ${selectedActivityMetric.label.toLowerCase()} across the last ${chartPeriod} days.${showingStaleTimeseries ? ' Updating the selected range.' : ''}`} />
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <DashboardTabs label="Activity metric" onChange={setActivityMetric} options={Object.values(activityMetrics)} value={activityMetric} />
+                    <DashboardTabs label="Activity period" onChange={setPeriod} options={dashboardPeriods.map((value) => ({ key: value, label: `${value}d` }))} value={period} />
                   </div>
                 </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="grid grid-cols-3 gap-2 text-right">
+                    <MiniStat label="Retrievals" value={formatNumber(activityTotals.retrievals)} />
+                    <MiniStat label="Uploads" value={formatNumber(activityTotals.uploads)} />
+                    <MiniStat label="Experiments" value={formatNumber(activityTotals.experiments)} />
+                  </div>
+                  {summary ? <p className="text-xs font-semibold text-slate-500">Total storage: {formatBytes(documents.totalStorageBytes)}</p> : null}
+                </div>
                 <div className="mt-5 h-72">
-                  {chartData.length ? (
-                    <ResponsiveContainer height="100%" width="100%">
-                      <AreaChart data={chartData} margin={{ bottom: 0, left: -18, right: 10, top: 10 }}>
+                  {state.timeseries ? chartData.length ? (
+                    <div aria-describedby="activity-chart-summary" aria-label={`Daily ${selectedActivityMetric.label.toLowerCase()} for the last ${chartPeriod} days`} className="h-full" role="img">
+                      <p className="sr-only" id="activity-chart-summary">The selected activity metric totals {formatNumber(activityTotals[selectedActivityMetric.key])} over the last {chartPeriod} days.</p>
+                      <ResponsiveContainer height="100%" width="100%">
+                        <AreaChart data={chartData} margin={{ bottom: 0, left: -18, right: 10, top: 10 }}>
                         <defs>
-                          <linearGradient id="dashboardUploads" x1="0" x2="0" y1="0" y2="1">
-                            <stop offset="5%" stopColor="hsl(176 77% 26%)" stopOpacity={0.32} />
-                            <stop offset="95%" stopColor="hsl(176 77% 26%)" stopOpacity={0.03} />
+                          <linearGradient id="dashboardActivity" x1="0" x2="0" y1="0" y2="1">
+                            <stop offset="5%" stopColor={selectedActivityMetric.color} stopOpacity={0.32} />
+                            <stop offset="95%" stopColor={selectedActivityMetric.color} stopOpacity={0.03} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid stroke="#dbe7e5" strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
+                        <XAxis dataKey="date" interval={0} padding={{ left: 8, right: 8 }} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} tickMargin={8} ticks={chartTickValues} />
                         <YAxis allowDecimals={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
                         <Tooltip content={<DashboardTooltip />} />
-                        <Area dataKey="uploads" fill="url(#dashboardUploads)" name="Uploads" stroke="hsl(176 77% 26%)" strokeWidth={2.5} type="monotone" />
-                        <Area dataKey="retrievals" fill="transparent" name="Retrievals" stroke="#0f766e" strokeDasharray="5 4" strokeWidth={2} type="monotone" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                        <Area dataKey={selectedActivityMetric.key} fill="url(#dashboardActivity)" name={selectedActivityMetric.label} stroke={selectedActivityMetric.color} strokeWidth={2.5} type="monotone" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
                   ) : (
                     <EmptyInline title="No activity data" description="The backend returned no timeseries points yet." />
-                  )}
+                  ) : <DataUnavailable description={state.errors.timeseries || 'Activity data is not available yet.'} title="Activity unavailable" compact />}
                 </div>
               </div>
             </Panel>
 
-            <Panel className="p-5">
-              <SectionTitle icon={ServerCog} title="System health" subtitle={state.health?.status === 'OK' ? 'All monitored checks are clear.' : 'Some operational checks need attention.'} />
-              <div className="mt-5 space-y-3">
-                {healthItems.map((item) => <HealthRow item={item} key={item.key} />)}
-              </div>
-            </Panel>
+            <section id="operational-alerts">
+              <Panel className="p-5">
+                <SectionTitle icon={ServerCog} title="Operational alerts" subtitle={state.health?.status === 'OK' ? 'All monitored checks are clear.' : 'Items needing review are listed below.'} />
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {state.health ? healthItems.length ? healthItems.map((item) => <HealthRow item={item} key={item.key} />) : <EmptyInline title="No operational checks" description="The backend returned no operational alert records." /> : <DataUnavailable description={state.errors.health || 'Operational alerts are not available yet.'} title="Alerts unavailable" compact />}
+                </div>
+              </Panel>
+            </section>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          {summary ? <div className="grid gap-4 lg:grid-cols-3">
             <Panel className="p-5">
               <SectionTitle icon={FileText} title="Document operations" subtitle="Processing and review status." />
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <MiniStat label="Processed" value={formatNumber(documents.processed)} />
                 <MiniStat label="Processing" value={formatNumber(documents.processing)} />
                 <MiniStat label="Failed" value={formatNumber(documents.failed)} />
+                <MiniStat label="No text" value={formatNumber(documents.noText)} />
                 <MiniStat label="Pending review" value={formatNumber(documents.pendingReview)} />
               </div>
+              <DashboardLink label="Open documents" to="/admin/documents" />
             </Panel>
             <Panel className="p-5">
-              <SectionTitle icon={FlaskConical} title="Experiment status" subtitle="Benchmark and fine-tuning records." />
-              <div className="mt-5 h-52">
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={[
-                    { status: 'Pending', value: Number(experiments.pending ?? 0) },
-                    { status: 'Queued', value: Number(experiments.queued ?? 0) },
-                    { status: 'Running', value: Number(experiments.running ?? 0) },
-                    { status: 'Completed', value: Number(experiments.completed ?? 0) },
-                    { status: 'Failed', value: Number(experiments.failed ?? 0) },
-                  ]} margin={{ bottom: 0, left: -18, right: 10, top: 10 }}>
-                    <CartesianGrid stroke="#dbe7e5" strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="status" tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} tickLine={false} />
-                    <YAxis allowDecimals={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} tickLine={false} />
-                    <Tooltip content={<DashboardTooltip />} />
-                    <Bar dataKey="value" fill="hsl(176 77% 26%)" name="Experiments" radius={[7, 7, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <SectionTitle icon={FlaskConical} title="Research operations" subtitle="Benchmark and fine-tuning runs." />
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <MiniStat label="Pending" value={formatNumber(experiments.pending)} />
+                <MiniStat label="Queued" value={formatNumber(experiments.queued)} />
+                <MiniStat label="Running" value={formatNumber(experiments.running)} />
+                <MiniStat label="Completed" value={formatNumber(experiments.completed)} />
+                <MiniStat label="Failed" value={formatNumber(experiments.failed)} />
+                <MiniStat label="Cancelled" value={formatNumber(experiments.cancelled)} />
               </div>
+              <DashboardLink label="Open research benchmark" to="/admin/research-dashboard" />
             </Panel>
             <Panel className="p-5">
-              <SectionTitle icon={ShieldCheck} title="Readiness" subtitle="CourseQA resources available to admins." />
+              <SectionTitle icon={ShieldCheck} title="Workspace readiness" subtitle="Resources available to administrators." />
               <div className="mt-5 grid gap-3">
                 <ReadinessLine label="Active users" value={`${formatNumber(totals.activeUsers)} / ${formatNumber(totals.users)}`} />
                 <ReadinessLine label="Active courses" value={`${formatNumber(totals.activeCourses)} / ${formatNumber(totals.courses)}`} />
@@ -235,31 +306,37 @@ export function AdminDashboardPage() {
                 <ReadinessLine label="Missing previews" value={formatNumber(documents.missingPreview)} />
               </div>
             </Panel>
-          </div>
+          </div> : null}
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          {summary ? <div className="grid gap-4 xl:grid-cols-3">
             <ActivityPanel
+              actionLabel="Open documents"
               empty="No recent documents."
+              href="/admin/documents"
               icon={FileText}
               items={activity.recentDocuments ?? []}
               renderItem={(item) => (
                 <ActivityItem
-                  meta={`${item.fileType || 'FILE'} - ${formatBytes(item.fileSizeBytes)}`}
+                  meta={`${item.fileType || 'FILE'} · ${formatBytes(item.fileSizeBytes)} · ${formatActivityTime(item.uploadedAt)}`}
                   status={statusForBadge(item.processingStatus)}
                   title={item.documentTitle || item.originalFilename || 'Untitled document'}
+                  to="/admin/documents"
                 />
               )}
               title="Recent documents"
             />
             <ActivityPanel
+              actionLabel="Open research"
               empty="No recent experiments."
+              href="/admin/research-dashboard"
               icon={FlaskConical}
               items={activity.recentExperiments ?? []}
               renderItem={(item) => (
                 <ActivityItem
-                  meta={`${item.experimentType || 'Evaluation'} - ${item.llmModel || 'No model'}`}
-                  status={statusForBadge(item.status)}
+                  meta={`${item.experimentType || 'Evaluation'} · ${item.llmModel || 'No model'} · ${formatActivityTime(item.updatedAt || item.createdAt)}`}
+                  status={experimentStatusForBadge(item.status)}
                   title={item.experimentName || 'Untitled experiment'}
+                  to="/admin/research-dashboard"
                 />
               )}
               title="Recent experiments"
@@ -270,26 +347,78 @@ export function AdminDashboardPage() {
               items={activity.recentRetrievalQueries ?? []}
               renderItem={(item) => (
                 <ActivityItem
-                  meta={`${item.scopeType || 'Workspace'} - ${item.latencyMs ?? 0} ms`}
-                  status={item.isAnswerable === false ? 'Failed' : 'Processed'}
+                  meta={`${item.scopeType || 'Workspace'} · ${item.latencyMs ?? 0} ms · ${formatActivityTime(item.createdAt)}`}
+                  status={item.isAnswerable === false ? 'Not answerable' : 'Retrieved'}
                   title={item.queryText || 'Empty query'}
                 />
               )}
               title="Recent retrievals"
             />
-          </div>
+          </div> : null}
         </>
       )}
     </div>
   )
 }
 
+function DashboardTabs({ label, onChange, options, value }) {
+  return (
+    <div aria-label={label} className="flex rounded-lg bg-white/72 p-1 shadow-inner" role="group">
+      {options.map((option) => (
+        <button
+          aria-pressed={value === option.key}
+          className={`min-h-8 rounded-md px-2 text-[11px] font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500 ${value === option.key ? 'bg-primary text-white shadow-sm' : 'text-slate-500 hover:bg-white hover:text-primary'}`}
+          key={option.key}
+          onClick={() => onChange(option.key)}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function DashboardSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading dashboard" className="animate-pulse space-y-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((item) => <div className="h-32 rounded-[20px] bg-white/70 shadow-[0_18px_42px_rgba(15,118,110,.06)]" key={item} />)}
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,.65fr)]">
+        <div className="h-[25rem] rounded-[20px] bg-white/70 shadow-[0_18px_42px_rgba(15,118,110,.06)]" />
+        <div className="h-[25rem] rounded-[20px] bg-white/70 shadow-[0_18px_42px_rgba(15,118,110,.06)]" />
+      </div>
+    </div>
+  )
+}
+
+function DataUnavailable({ compact = false, description, title }) {
+  return (
+    <div className={`grid place-items-center rounded-xl border border-dashed border-slate-300 bg-white/52 p-4 text-center ${compact ? 'min-h-full' : 'min-h-32'}`} role="status">
+      <div>
+        <p className="text-sm font-semibold text-slate-700">{title}</p>
+        <p className="mt-1 max-w-md text-xs font-medium leading-5 text-slate-500">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+function DashboardLink({ label, to }) {
+  return (
+    <Link className="mt-5 inline-flex items-center gap-1.5 text-sm font-black text-primary transition hover:text-teal-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500" to={to}>
+      {label}<ArrowRight size={15} />
+    </Link>
+  )
+}
+
 function DashboardTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null
+  const exactDate = payload[0]?.payload?.fullDate ?? label
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white/95 p-3 text-xs shadow-[0_16px_36px_rgba(15,23,42,.12)] backdrop-blur-xl">
-      <p className="mb-2 font-semibold text-slate-900">{label}</p>
+      <p className="mb-2 font-semibold text-slate-900">{exactDate}</p>
       <div className="space-y-1">
         {payload.map((entry) => (
           <p className="flex items-center justify-between gap-5 font-medium text-slate-600" key={entry.dataKey}>
@@ -303,18 +432,19 @@ function DashboardTooltip({ active, payload, label }) {
 }
 
 function HealthRow({ item }) {
-  const status = item.status === 'OK' ? 'Processed' : item.status === 'INFO' ? 'Pending' : 'Failed'
+  const isHealthy = item.status === 'OK'
+  const action = isHealthy ? null : healthActionFor(item.key)
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/72 p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
-          <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{item.message}</p>
-        </div>
-        <StatusBadge status={status} />
+    <div className={`rounded-xl border p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)] ${isHealthy ? 'border-emerald-300/90 bg-emerald-50/35' : 'border-red-300/90 bg-red-50/35'}`}>
+      <div className="min-w-0">
+        <p className="break-words text-xs font-bold leading-4 text-slate-900 sm:text-sm">{item.label}</p>
+        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-4 text-slate-500 sm:text-xs">{item.message}</p>
       </div>
-      <p className="mt-3 text-2xl font-black tracking-tight text-slate-950">{formatNumber(item.count)}</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="text-xl font-black tracking-tight tabular-nums text-slate-950">{formatNumber(item.count)}</p>
+        {action ? <Link className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-red-200 bg-white/85 px-2.5 text-[11px] font-black text-red-700 shadow-sm transition hover:border-red-300 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500" to={action.to}>{action.compactLabel}<ArrowRight size={12} /></Link> : null}
+      </div>
     </div>
   )
 }
@@ -328,10 +458,13 @@ function ReadinessLine({ label, value }) {
   )
 }
 
-function ActivityPanel({ empty, icon, items, renderItem, title }) {
+function ActivityPanel({ actionLabel, empty, href, icon, items, renderItem, title }) {
   return (
     <Panel className="p-5">
-      <SectionTitle icon={icon} title={title} subtitle={`${items.length} latest backend records.`} />
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle icon={icon} title={title} subtitle={`${items.length} latest records.`} />
+        {href && actionLabel ? <Link aria-label={actionLabel} className="grid size-9 shrink-0 place-items-center rounded-lg text-primary transition hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500" title={actionLabel} to={href}><ArrowRight size={16} /></Link> : null}
+      </div>
       <div className="mt-5 space-y-3">
         {items.length ? items.map((item) => (
           <div key={item.documentId ?? item.experimentId ?? item.retrievalQueryId}>
@@ -343,9 +476,9 @@ function ActivityPanel({ empty, icon, items, renderItem, title }) {
   )
 }
 
-function ActivityItem({ meta, status, title }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white/72 p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)]">
+function ActivityItem({ meta, status, title, to }) {
+  const content = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="line-clamp-2 text-sm font-semibold leading-5 text-slate-900">{title}</p>
@@ -353,8 +486,11 @@ function ActivityItem({ meta, status, title }) {
         </div>
         <StatusBadge status={status} />
       </div>
-    </div>
+    </>
   )
+
+  const className = 'block rounded-xl border border-slate-200 bg-white/72 p-3 shadow-[0_10px_24px_rgba(15,118,110,.05)] transition hover:border-teal-200 hover:bg-teal-50/55 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500'
+  return to ? <Link className={className} to={to}>{content}</Link> : <div className={className}>{content}</div>
 }
 
 function EmptyInline({ description, title }) {
@@ -388,6 +524,40 @@ function formatShortDate(value) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function formatFullDate(value) {
+  if (!value) return ''
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function formatActivityTime(value) {
+  if (!value) return 'Unknown time'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  const elapsed = Date.now() - date.getTime()
+  if (elapsed >= 0 && elapsed < 60 * 60 * 1000) return `${Math.max(1, Math.round(elapsed / 60000))}m ago`
+  if (elapsed >= 0 && elapsed < 24 * 60 * 60 * 1000) return `${Math.round(elapsed / 3600000)}h ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function experimentStatusForBadge(value) {
+  if (value === 'COMPLETED') return 'Completed'
+  if (value === 'RUNNING') return 'Processing'
+  if (value === 'QUEUED') return 'Queued'
+  if (value === 'PENDING') return 'Pending'
+  if (value === 'CANCELLED') return 'Cancelled'
+  if (value === 'FAILED') return 'Failed'
+  return 'Unavailable'
+}
+
+function healthActionFor(key) {
+  if (['failedDocuments', 'pendingReviews', 'missingPreview'].includes(key)) return { compactLabel: 'Review', to: '/admin/documents' }
+  if (key === 'failedExperiments') return { compactLabel: 'Review', to: '/admin/research-dashboard' }
+  if (key === 'activeEmbeddingModels') return { compactLabel: 'Review', to: '/admin/research-dashboard' }
+  return null
+}
+
 export function AdminUsersPage() {
   const currentUser = getSavedUser()
   const [users, setUsers] = useState([])
@@ -395,8 +565,14 @@ export function AdminUsersPage() {
   const [role, setRole] = useState(allOption)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [roleChangeTarget, setRoleChangeTarget] = useState(null)
+  const [normalizationRequested, setNormalizationRequested] = useState(false)
   const [roleUpdatingId, setRoleUpdatingId] = useState('')
+  const [deletingId, setDeletingId] = useState('')
+  const [normalizing, setNormalizing] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -407,124 +583,479 @@ export function AdminUsersPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [reloadKey])
 
-  const filtered = users.filter((user) => {
-    const userRoles = (user.roles ?? []).map((item) => String(item).toUpperCase())
-    const text = `${user.fullName ?? ''} ${user.email ?? ''}`.toLowerCase()
+  const filtered = useMemo(() => users.filter((user) => {
+    const text = `${user.fullName ?? user.name ?? ''} ${user.email ?? ''}`.toLowerCase()
     return (
       (!query.trim() || text.includes(query.trim().toLowerCase())) &&
-      (role === allOption || userRoles.includes(role))
+      (role === allOption || getUserRole(user) === role)
     )
-  })
+  }), [query, role, users])
+  const legacyUsers = useMemo(() => users.filter(hasLegacyRole), [users])
+  const adminCount = useMemo(() => users.filter((user) => getUserRole(user) === ADMIN_ROLE).length, [users])
+  const filtersActive = Boolean(query.trim() || role !== allOption)
+  const initialLoading = loading && users.length === 0
+
+  function reloadUsers() {
+    setLoading(true)
+    setError('')
+    setSuccessMessage('')
+    setReloadKey((value) => value + 1)
+  }
 
   async function changeRole(userId, nextRole) {
+    if (!userId || !roles.includes(nextRole)) return false
     setError('')
+    setSuccessMessage('')
     setRoleUpdatingId(userId)
     try {
       const updated = await updateUserRole(userId, nextRole)
       const nextUser = updated?.data ?? updated
       setUsers((current) => current.map((user) => {
-        const currentId = user.userId ?? user.id
+        const currentId = getUserId(user)
         if (currentId !== userId) return user
-        return nextUser?.userId || nextUser?.id
-          ? nextUser
-          : { ...user, roles: [nextRole === 'USER' ? 'STUDENT' : nextRole] }
+        if (getUserId(nextUser)) {
+          const normalizedRole = getUserRole(nextUser)
+          return {
+            ...user,
+            ...nextUser,
+            role: normalizedRole.toLowerCase(),
+            roles: [normalizedRole],
+          }
+        }
+        return { ...user, role: nextRole.toLowerCase(), roles: [nextRole] }
       }))
+      setSuccessMessage(`${getUserName(users.find((user) => getUserId(user) === userId))} is now ${formatRole(nextRole)}.`)
+      return true
     } catch (requestError) {
       setError(requestError.message)
+      return false
     } finally {
       setRoleUpdatingId('')
     }
   }
 
+  function requestRoleChange(user, nextRole) {
+    const userId = getUserId(user)
+    const currentRole = getUserRole(user)
+    const isCurrentUser = userId === currentUser?.id
+    const isOnlyAdmin = currentRole === ADMIN_ROLE && adminCount <= 1
+
+    if (nextRole === currentRole) return
+    if (isCurrentUser && nextRole !== ADMIN_ROLE) {
+      setError('You cannot remove administrator access from your own account.')
+      return
+    }
+    if (isOnlyAdmin && nextRole !== ADMIN_ROLE) {
+      setError('At least one administrator must remain in the workspace.')
+      return
+    }
+    if (nextRole === ADMIN_ROLE) {
+      setRoleChangeTarget({ user, nextRole })
+      return
+    }
+    changeRole(userId, nextRole)
+  }
+
+  async function confirmRoleChange() {
+    if (!roleChangeTarget) return
+    const didUpdate = await changeRole(getUserId(roleChangeTarget.user), roleChangeTarget.nextRole)
+    if (didUpdate) setRoleChangeTarget(null)
+  }
+
+  async function normalizeLegacyRoles() {
+    const targets = legacyUsers.map((user) => ({ id: getUserId(user), role: getUserRole(user) })).filter((target) => target.id)
+    if (!targets.length) {
+      setNormalizationRequested(false)
+      return
+    }
+
+    setNormalizing(true)
+    setError('')
+    setSuccessMessage('')
+    const results = await Promise.allSettled(targets.map((target) => updateUserRole(target.id, target.role)))
+    const succeededIds = new Set(targets.filter((_, index) => results[index].status === 'fulfilled').map((target) => target.id))
+    const failedCount = targets.length - succeededIds.size
+
+    setUsers((current) => current.map((user) => {
+      const userId = getUserId(user)
+      if (!succeededIds.has(userId)) return user
+      const nextRole = getUserRole(user)
+      return { ...user, role: nextRole.toLowerCase(), roles: [nextRole] }
+    }))
+    if (succeededIds.size) setSuccessMessage(`Normalized ${succeededIds.size} legacy ${succeededIds.size === 1 ? 'role' : 'roles'} to Admin or Student.`)
+    if (failedCount) setError(`${failedCount} ${failedCount === 1 ? 'account could' : 'accounts could'} not be normalized. Please try again.`)
+    setNormalizing(false)
+    setNormalizationRequested(false)
+  }
+
+  function requestDelete(user) {
+    const userId = getUserId(user)
+    const isCurrentUser = userId === currentUser?.id
+    const isOnlyAdmin = getUserRole(user) === ADMIN_ROLE && adminCount <= 1
+    if (isCurrentUser) {
+      setError('You cannot delete the account currently signed in.')
+      return
+    }
+    if (isOnlyAdmin) {
+      setError('At least one administrator must remain in the workspace.')
+      return
+    }
+    setDeleteTarget(user)
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return
+    const userId = getUserId(deleteTarget)
+    if (!userId) {
+      setError('This account has no user ID, so it cannot be deleted.')
+      return
+    }
+    setDeletingId(userId)
+    setError('')
+    setSuccessMessage('')
     try {
-      await deleteUser(deleteTarget.userId)
-      setUsers((current) => current.filter((user) => user.userId !== deleteTarget.userId))
+      await deleteUser(userId)
+      setUsers((current) => current.filter((user) => getUserId(user) !== userId))
       setDeleteTarget(null)
+      setSuccessMessage(`${getUserName(deleteTarget)} was deleted.`)
     } catch (requestError) {
       setError(requestError.message)
+    } finally {
+      setDeletingId('')
     }
   }
 
   return (
-    <CrudPage description="Manage real backend user accounts and roles." icon={Users} title="User Management">
+    <CrudPage description="Manage student and administrator accounts from the live backend." icon={Users} title="User Management">
       {error ? <Alert message={error} /> : null}
+      {successMessage ? <SuccessNotice message={successMessage} /> : null}
       <Toolbar>
         <Field icon={Search} label="Search user" onChange={(event) => setQuery(event.target.value)} placeholder="Name or email..." value={query} />
-        <SelectField label="Role" onChange={(event) => setRole(event.target.value)} value={role}>
-          {[allOption, ...roles.filter((item) => item !== 'USER')].map((item) => <option key={item}>{item}</option>)}
-        </SelectField>
+        <RoleMenu allowAll currentRole={role} onChange={setRole} stretch />
+        <div className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-border bg-white/90 px-3 text-sm shadow-[0_10px_24px_rgba(15,118,110,.06)] backdrop-blur-xl">
+          <p className="font-semibold text-slate-600"><span className="font-black text-slate-950">{filtered.length}</span> of {users.length} accounts</p>
+          <button className="text-xs font-black text-primary transition hover:text-teal-800 disabled:cursor-not-allowed disabled:text-slate-400" disabled={!filtersActive} onClick={() => { setQuery(''); setRole(allOption) }} type="button">Clear</button>
+        </div>
+        <div className="flex min-h-11 items-center justify-end gap-2">
+          {legacyUsers.length ? <Button disabled={loading || normalizing} onClick={() => setNormalizationRequested(true)} size="sm" type="button" variant="accent">Normalize {legacyUsers.length}</Button> : null}
+          <Button disabled={loading} onClick={reloadUsers} size="sm" type="button" variant="secondary"><RefreshCcw className={loading ? 'animate-spin' : ''} size={14} />Refresh</Button>
+        </div>
       </Toolbar>
-      {loading ? <Loading label="Loading users" /> : filtered.length ? (
-        <DataTable
-          columns={['User', 'Roles', 'Status', 'Actions']}
-          rows={filtered.map((user) => {
-            const userId = user.userId ?? user.id
-            const isCurrentUser = userId === currentUser?.id
-            const primaryRole = user.roles?.[0] ?? 'STUDENT'
-            return [
-              <Identity key="user" subtitle={user.email} title={user.fullName ?? user.name ?? 'FStu User'} />,
-              <select
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-black disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={roleUpdatingId === userId}
-                key="role"
-                onChange={(event) => changeRole(userId, event.target.value)}
-                value={primaryRole}
-              >
-                {roles.map((item) => <option key={item}>{item}</option>)}
-              </select>,
-              <StatusBadge key="status" status={statusForBadge(user.isActive ?? true)} />,
-              <RowActions key="actions">
-                <IconButton disabled={isCurrentUser} label={isCurrentUser ? 'Current account' : 'Delete user'} onClick={() => setDeleteTarget(user)}><Trash2 size={15} /></IconButton>
-              </RowActions>,
-            ]
-          })}
+      {initialLoading ? <Loading label="Loading users" /> : filtered.length ? <>
+        <div className="hidden md:block">
+          <DataTable
+            columns={['User', 'Role', 'Account status', 'Actions']}
+            rows={filtered.map((user) => {
+              const userId = getUserId(user)
+              const currentRole = getUserRole(user)
+              const isCurrentUser = userId === currentUser?.id
+              const isOnlyAdmin = currentRole === ADMIN_ROLE && adminCount <= 1
+              const actionDisabled = !userId || isCurrentUser || isOnlyAdmin || Boolean(deletingId) || normalizing
+              const actionLabel = isCurrentUser ? 'Current account cannot be deleted' : isOnlyAdmin ? 'At least one administrator must remain' : !userId ? 'User ID unavailable' : 'Delete user'
+              return [
+                <Identity key="user" subtitle={user.email} title={getUserName(user)} />,
+                <UserRoleSelect currentRole={currentRole} disabled={!userId || roleUpdatingId === userId || normalizing} key="role" onChange={(nextRole) => requestRoleChange(user, nextRole)} userName={getUserName(user)} />,
+                <StatusBadge key="status" status={accountStatus(user)} />,
+                <RowActions key="actions">
+                  <IconButton disabled={actionDisabled} label={actionLabel} onClick={() => requestDelete(user)}><Trash2 size={15} /></IconButton>
+                </RowActions>,
+              ]
+            })}
+          />
+        </div>
+        <UserRoster
+          adminCount={adminCount}
+          currentUserId={currentUser?.id}
+          deletingId={deletingId}
+          normalizing={normalizing}
+          onDelete={requestDelete}
+          onRoleChange={requestRoleChange}
+          roleUpdatingId={roleUpdatingId}
+          users={filtered}
         />
-      ) : <EmptyState title="No users" description="The backend returned no users for this account." />}
+      </> : <EmptyState action={filtersActive ? <Button onClick={() => { setQuery(''); setRole(allOption) }} type="button" variant="secondary">Clear filters</Button> : null} title={filtersActive ? 'No matching users' : 'No users'} description={filtersActive ? 'Try a different name, email, or role filter.' : 'The backend returned no user accounts for this workspace.'} />}
       {deleteTarget ? (
-        <ConfirmModal actionLabel="Delete user" onCancel={() => setDeleteTarget(null)} onConfirm={confirmDelete} title="Delete user?">
-          The account "{deleteTarget.fullName}" will be removed from the backend.
+        <ConfirmModal actionLabel="Delete user" busy={deletingId === getUserId(deleteTarget)} busyLabel="Deleting user" onCancel={() => setDeleteTarget(null)} onConfirm={confirmDelete} title="Delete user?">
+          The account "{getUserName(deleteTarget)}" will be removed from the backend.
+        </ConfirmModal>
+      ) : null}
+      {roleChangeTarget ? (
+        <ConfirmModal actionLabel="Make administrator" busy={roleUpdatingId === getUserId(roleChangeTarget.user)} busyLabel="Updating role" onCancel={() => setRoleChangeTarget(null)} onConfirm={confirmRoleChange} title="Grant administrator access?">
+          {getUserName(roleChangeTarget.user)} will be able to manage users, course materials, and research operations.
+        </ConfirmModal>
+      ) : null}
+      {normalizationRequested ? (
+        <ConfirmModal actionLabel="Normalize roles" busy={normalizing} busyLabel="Normalizing roles" onCancel={() => setNormalizationRequested(false)} onConfirm={normalizeLegacyRoles} title="Normalize legacy roles?">
+          This will update {legacyUsers.length} {legacyUsers.length === 1 ? 'account' : 'accounts'} through the existing role API. Only Admin and Student roles will remain.
         </ConfirmModal>
       ) : null}
     </CrudPage>
   )
 }
 
+function UserRoster({ adminCount, currentUserId, deletingId, normalizing, onDelete, onRoleChange, roleUpdatingId, users }) {
+  return (
+    <div className="grid gap-3 md:hidden">
+      {users.map((user) => {
+        const userId = getUserId(user)
+        const currentRole = getUserRole(user)
+        const isCurrentUser = userId === currentUserId
+        const isOnlyAdmin = currentRole === ADMIN_ROLE && adminCount <= 1
+        const deleteDisabled = !userId || isCurrentUser || isOnlyAdmin || Boolean(deletingId) || normalizing
+        const deleteLabel = isCurrentUser ? 'Current account cannot be deleted' : isOnlyAdmin ? 'At least one administrator must remain' : !userId ? 'User ID unavailable' : 'Delete user'
+
+        return (
+          <Panel className="p-4" key={userId || `${user.email}-${getUserName(user)}`}>
+            <div className="flex items-start justify-between gap-3">
+              <Identity subtitle={user.email} title={getUserName(user)} />
+              <StatusBadge status={accountStatus(user)} />
+            </div>
+            <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 border-t border-slate-100 pt-3">
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Role</p>
+                <UserRoleSelect currentRole={currentRole} disabled={!userId || roleUpdatingId === userId || normalizing} onChange={(nextRole) => onRoleChange(user, nextRole)} userName={getUserName(user)} />
+              </div>
+              <IconButton disabled={deleteDisabled} label={deleteLabel} onClick={() => onDelete(user)}><Trash2 size={15} /></IconButton>
+            </div>
+          </Panel>
+        )
+      })}
+    </div>
+  )
+}
+
+function UserRoleSelect({ currentRole, disabled, onChange, userName }) {
+  return <RoleMenu currentRole={currentRole} disabled={disabled} label={`Role for ${userName}`} onChange={onChange} />
+}
+
+function RoleMenu({ allowAll = false, className = '', currentRole, disabled = false, label, onChange, stretch = false }) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef(null)
+  const buttonRef = useRef(null)
+  const menuRef = useRef(null)
+  const menuItemRefs = useRef([])
+  const [menuPosition, setMenuPosition] = useState(null)
+  const options = useMemo(() => (allowAll ? [allOption, ...roles] : roles), [allowAll])
+  const selectedRole = options.includes(currentRole) ? currentRole : (allowAll ? allOption : STUDENT_ROLE)
+  const selectedLabel = selectedRole === allOption ? 'All' : formatRole(selectedRole)
+
+  const getMenuPosition = useCallback((rect) => {
+    const width = Math.max(rect.width, 124)
+    const estimatedHeight = options.length * 36 + 8
+    const spaceBelow = window.innerHeight - rect.bottom
+    const openAbove = spaceBelow < estimatedHeight && rect.top > estimatedHeight
+    return {
+      left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8)),
+      top: openAbove ? rect.top - estimatedHeight - 6 : rect.bottom + 6,
+      width,
+    }
+  }, [options.length])
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    function handlePointerDown(event) {
+      if (!containerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false)
+    }
+
+    function handleEscape(event) {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      buttonRef.current?.focus()
+    }
+
+    function updatePosition() {
+      const rect = buttonRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setMenuPosition(getMenuPosition(rect))
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [getMenuPosition, open])
+
+  function openMenu() {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (rect) setMenuPosition(getMenuPosition(rect))
+    setOpen(true)
+  }
+
+  function selectRole(nextRole) {
+    setOpen(false)
+    if (nextRole !== selectedRole) onChange(nextRole)
+  }
+
+  function handleButtonKeyDown(event) {
+    if (disabled) return
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openMenu()
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      openMenu()
+    }
+  }
+
+  function handleMenuItemKeyDown(event, index, option) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectRole(option)
+      buttonRef.current?.focus()
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      menuItemRefs.current[(index + 1) % options.length]?.focus()
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      menuItemRefs.current[(index - 1 + options.length) % options.length]?.focus()
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      menuItemRefs.current[0]?.focus()
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      menuItemRefs.current[options.length - 1]?.focus()
+    }
+  }
+
+  useEffect(() => {
+    if (open) menuItemRefs.current[options.indexOf(selectedRole)]?.focus()
+  }, [open, options, selectedRole])
+
+  return (
+    <div className={`relative ${className}`} ref={containerRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={label ?? 'Role filter'}
+        className={`flex min-h-9 ${stretch ? 'w-full' : 'w-fit'} min-w-[108px] items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-left text-xs font-black text-slate-700 shadow-sm transition duration-200 hover:border-teal-300 hover:bg-teal-50/40 active:translate-y-px focus-visible:border-teal-400 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-60`}
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={handleButtonKeyDown}
+        ref={buttonRef}
+        type="button"
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown className={`shrink-0 text-slate-400 transition-transform duration-200 ${open ? 'rotate-180 text-primary' : ''}`} size={15} />
+      </button>
+      {open && menuPosition ? createPortal(
+        <div
+          aria-label={label ?? 'Role options'}
+          className="fixed z-[80] overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-[0_18px_40px_rgba(15,23,42,.14)]"
+          ref={menuRef}
+          role="menu"
+          style={{ left: menuPosition.left, minWidth: menuPosition.width, top: menuPosition.top }}
+        >
+          {options.map((option, index) => {
+            const active = option === selectedRole
+            return (
+              <div
+                aria-checked={active}
+                className={`flex min-h-9 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 text-xs font-black transition-colors focus-visible:bg-teal-50 focus-visible:outline-none ${active ? 'bg-teal-50 text-primary' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'}`}
+                key={option}
+                onClick={() => selectRole(option)}
+                onKeyDown={(event) => handleMenuItemKeyDown(event, index, option)}
+                ref={(element) => { menuItemRefs.current[index] = element }}
+                role="menuitemradio"
+                tabIndex={0}
+              >
+                {option === allOption ? 'All' : formatRole(option)}
+                {active ? <Check aria-hidden size={14} /> : null}
+              </div>
+            )
+          })}
+        </div>,
+        document.body,
+      ) : null}
+    </div>
+  )
+}
+
+function SuccessNotice({ message }) {
+  return <div className="mb-4 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700"><Check className="mt-0.5 shrink-0" size={17} /><p>{message}</p></div>
+}
+
+function getUserId(user) {
+  return user?.userId ?? user?.id ?? ''
+}
+
+function getUserName(user) {
+  return user?.fullName ?? user?.name ?? 'FStu User'
+}
+
+function getUserRole(user) {
+  return normalizeRoles(user?.roles ?? (user?.role ? [user.role] : []))[0]
+}
+
+function hasLegacyRole(user) {
+  const rawRoles = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : [])
+  const normalizedRawRoles = rawRoles.map((role) => String(role).toUpperCase())
+  return normalizedRawRoles.length !== 1 || normalizedRawRoles[0] !== getUserRole(user)
+}
+
+function accountStatus(user) {
+  return user?.isActive === false ? 'Inactive' : 'Active'
+}
+
+function formatRole(role) {
+  return role === ADMIN_ROLE ? 'Admin' : 'Student'
+}
+
 export function AdminDocumentsPage() {
   const [docs, setDocs] = useState([])
   const [courses, setCourses] = useState([])
+  const [chapters, setChapters] = useState([])
   const [semesters, setSemesters] = useState([])
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState(allOption)
   const [semesterId, setSemesterId] = useState(allOption)
   const [courseId, setCourseId] = useState(allOption)
   const [loading, setLoading] = useState(true)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const [error, setError] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deletingId, setDeletingId] = useState('')
   const [reindexingId, setReindexingId] = useState('')
-  const [reviewQueue, setReviewQueue] = useState([])
-  const [reviewCourses, setReviewCourses] = useState({})
-  const [reviewingId, setReviewingId] = useState('')
-  const [rejectTarget, setRejectTarget] = useState(null)
-  const [rejectionReason, setRejectionReason] = useState('')
+  const [activeEmbeddingModel, setActiveEmbeddingModel] = useState(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadFilesToSend, setUploadFilesToSend] = useState([])
+  const [uploadCourseId, setUploadCourseId] = useState('')
+  const [uploadChapterId, setUploadChapterId] = useState('')
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     let active = true
     async function loadDocs() {
+      setLoading(true)
+      setError('')
       try {
-        const [items, courseItems, semesterItems, pendingItems] = await Promise.all([
-          getDocuments(), getCourses(), getSemesterWorkspaces(), getReviewQueue(),
+        const [items, courseItems, semesterItems, model] = await Promise.all([
+          getDocuments(), getCourses(), getSemesterWorkspaces(), getActiveEmbeddingModel().catch(() => null),
         ])
+        const chapterGroups = await Promise.all(courseItems.map((course) => getChapters(course.id).catch(() => [])))
         if (!active) return
         setDocs(items)
         setCourses(courseItems)
+        setChapters(chapterGroups.flat())
         setSemesters(semesterItems)
-        setReviewQueue(pendingItems)
-        setReviewCourses(Object.fromEntries(pendingItems.map((item) => [item.id, item.targetCourseId ?? ''])))
+        setActiveEmbeddingModel(model)
+        setLastUpdatedAt(new Date().toISOString())
       } catch (requestError) {
         if (active) setError(requestError.message)
       } finally {
@@ -535,24 +1066,41 @@ export function AdminDocumentsPage() {
     return () => {
       active = false
     }
+  }, [reloadKey])
+
+  useEffect(() => {
+    function handleDocumentUploaded() {
+      setReloadKey((current) => current + 1)
+    }
+
+    window.addEventListener('fstu:document-uploaded', handleDocumentUploaded)
+    return () => window.removeEventListener('fstu:document-uploaded', handleDocumentUploaded)
   }, [])
 
   const courseById = useMemo(() => new Map(courses.map((course) => [course.id, course])), [courses])
+  const chapterById = useMemo(() => new Map(chapters.map((chapter) => [chapter.id, chapter])), [chapters])
   const semesterById = useMemo(() => new Map(semesters.map((semester) => [semester.id, semester])), [semesters])
   const visibleCourses = semesterId === allOption
     ? courses
     : courses.filter((course) => course.semesterWorkspaceId === semesterId)
+  const uploadChapters = useMemo(
+    () => chapters.filter((chapter) => chapter.courseId === uploadCourseId),
+    [chapters, uploadCourseId],
+  )
 
-  const filtered = docs.filter((doc) => {
+  const filtered = useMemo(() => docs.filter((doc) => {
     const q = query.toLowerCase().trim()
     const course = courseById.get(doc.courseId)
+    const chapter = chapterById.get(doc.chapterId)
     return (
-      (!q || doc.displayName.toLowerCase().includes(q) || course?.name?.toLowerCase().includes(q)) &&
+      (!q || [doc.displayName, doc.name, course?.name, course?.code, chapter?.title, doc.uploaderName].some((value) => value?.toLowerCase().includes(q))) &&
       (status === allOption || doc.status === status) &&
       (semesterId === allOption || course?.semesterWorkspaceId === semesterId) &&
       (courseId === allOption || doc.courseId === courseId)
     )
-  })
+  }), [chapterById, courseById, courseId, docs, query, semesterId, status])
+  const documentStats = useMemo(() => getDocumentStats(docs), [docs])
+  const filtersActive = Boolean(query || status !== allOption || semesterId !== allOption || courseId !== allOption)
 
   async function reindexDoc(doc) {
     setReindexingId(doc.id)
@@ -560,6 +1108,7 @@ export function AdminDocumentsPage() {
     try {
       const model = await getActiveEmbeddingModel()
       if (!model) throw new Error('No active embedding model found.')
+      setActiveEmbeddingModel(model)
       const job = await reindexDocument(doc.id, model.embeddingModelId)
       await waitForIndexingJob(job.id, {
         onProgress: (currentJob) => setDocs((current) => current.map((item) => item.id === doc.id ? {
@@ -602,72 +1151,78 @@ export function AdminDocumentsPage() {
     }
   }
 
-  async function approveReview(document) {
-    const selectedCourseId = reviewCourses[document.id]
-    if (!selectedCourseId) {
-      setError('Select a destination course before approval.')
-      return
-    }
-    setReviewingId(document.id)
-    setError('')
-    try {
-      const updated = await reviewDocument(document.id, 'APPROVED', { courseId: selectedCourseId })
-      setReviewQueue((current) => current.filter((item) => item.id !== document.id))
-      setDocs((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
-    } catch (requestError) {
-      setError(requestError.message)
-    } finally {
-      setReviewingId('')
-    }
+  function clearFilters() {
+    setQuery('')
+    setStatus(allOption)
+    setSemesterId(allOption)
+    setCourseId(allOption)
   }
 
-  async function rejectReview() {
-    if (!rejectTarget || !rejectionReason.trim()) return
-    setReviewingId(rejectTarget.id)
+  function openUploadDialog() {
+    setUploadFilesToSend([])
+    setUploadCourseId(courseId === allOption ? '' : courseId)
+    setUploadChapterId('')
+    setUploadOpen(true)
+  }
+
+  function updateUploadCourse(nextCourseId) {
+    setUploadCourseId(nextCourseId)
+    setUploadChapterId('')
+  }
+
+  function selectUploadFiles(files) {
+    const selectedFiles = Array.from(files ?? [])
+    const unsupportedFiles = selectedFiles.filter((file) => !isSupportedDocumentFile(file))
+    if (unsupportedFiles.length) {
+      setError('Only PDF, DOCX, PPTX, and TXT materials can be uploaded.')
+    }
+    setUploadFilesToSend(selectedFiles.filter(isSupportedDocumentFile))
+  }
+
+  async function uploadMaterials() {
+    if (!uploadFilesToSend.length) {
+      setError('Choose at least one material to upload.')
+      return
+    }
+    if (!uploadCourseId) {
+      setError('Select a destination course before uploading.')
+      return
+    }
+
+    setUploading(true)
     setError('')
     try {
-      const updated = await reviewDocument(rejectTarget.id, 'REJECTED', { rejectionReason: rejectionReason.trim() })
-      setReviewQueue((current) => current.filter((item) => item.id !== rejectTarget.id))
-      setDocs((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
-      setRejectTarget(null)
-      setRejectionReason('')
+      const tasks = uploadFiles(uploadFilesToSend, {
+        courseId: uploadCourseId,
+        chapterId: uploadChapterId || undefined,
+      })
+      const results = await Promise.allSettled(tasks.map((task) => task.promise))
+      const failedTask = results.find((result) => result.status === 'rejected')
+      if (failedTask?.status === 'rejected') throw failedTask.reason
+      setUploadOpen(false)
+      setUploadFilesToSend([])
+      setReloadKey((current) => current + 1)
     } catch (requestError) {
       setError(requestError.message)
     } finally {
-      setReviewingId('')
+      setUploading(false)
     }
   }
 
   return (
-    <CrudPage description="Manage documents returned by the backend document API." icon={FileText} title="Document Management">
-      {error ? <Alert message={error} /> : null}
-      <Panel className="p-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-          <div><h2 className="text-base font-black text-slate-950">Review queue</h2><p className="mt-1 text-xs font-semibold text-slate-500">{reviewQueue.length} pending document{reviewQueue.length === 1 ? '' : 's'}</p></div>
-          <StatusBadge status={reviewQueue.length ? 'Pending' : 'Processed'} />
-        </div>
-        {reviewQueue.length ? <div className="divide-y divide-slate-100">
-          {reviewQueue.map((document) => <div key={document.id} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,320px)_auto] lg:items-center">
-            <div className="min-w-0">
-              <p className="break-all text-sm font-black text-slate-900">{document.displayName}</p>
-              <p className="mt-1 text-xs font-semibold text-slate-500">{document.type} · {document.pages || 0} pages</p>
-            </div>
-            <SelectField label="Destination course" value={reviewCourses[document.id] ?? ''} onChange={(event) => setReviewCourses((current) => ({ ...current, [document.id]: event.target.value }))}>
-              <option value="">Select course</option>
-              {courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
-            </SelectField>
-            <RowActions>
-              <IconButton label="Preview" onClick={() => { const url = getDocumentPreviewUrl(document); if (url) window.open(url, '_blank', 'noopener,noreferrer') }}><Eye size={15} /></IconButton>
-              <Button size="sm" disabled={reviewingId === document.id} onClick={() => approveReview(document)}><Check size={15} />Approve</Button>
-              <Button size="sm" variant="danger" disabled={reviewingId === document.id} onClick={() => { setRejectTarget(document); setRejectionReason('') }}><X size={15} />Reject</Button>
-            </RowActions>
-          </div>)}
-        </div> : <div className="px-5 py-8 text-center text-sm font-semibold text-slate-500">No documents waiting for review.</div>}
-      </Panel>
-      <Toolbar>
-        <Field icon={Search} label="Search document" onChange={(event) => setQuery(event.target.value)} placeholder="Filename..." value={query} />
+    <CrudPage
+      actions={<div className="flex flex-wrap items-center justify-end gap-2"><span className="max-w-56 truncate text-xs font-semibold text-slate-500" title={activeEmbeddingModel?.name ?? ''}>{activeEmbeddingModel ? `Active model: ${activeEmbeddingModel.name}` : 'No active embedding model'}</span><Button onClick={() => setReloadKey((current) => current + 1)} size="sm" type="button" variant="secondary"><RefreshCcw className={loading ? 'animate-spin' : ''} size={15} />Refresh</Button><Button onClick={openUploadDialog} size="sm" type="button"><Upload size={15} />Upload material</Button></div>}
+      description="Review, organize, and prepare course materials before students use them in chat."
+      icon={FileText}
+      title="Document Management"
+    >
+      {error ? <Alert action={<Button onClick={() => setError('')} size="sm" type="button" variant="secondary">Dismiss</Button>} message={error} /> : null}
+      <DocumentOverview lastUpdatedAt={lastUpdatedAt} stats={documentStats} />
+      <Panel className="mb-4 p-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Field icon={Search} label="Search document" onChange={(event) => setQuery(event.target.value)} placeholder="Search name, course, chapter, or uploader..." value={query} />
         <SelectField label="Status" onChange={(event) => setStatus(event.target.value)} value={status}>
-          {[allOption, 'Uploaded', 'Processing', 'Processed', 'Indexed', 'Failed'].map((item) => <option key={item}>{item}</option>)}
+          {[allOption, 'Uploaded', 'Processing', 'Processed', 'Indexed', 'No text', 'Failed'].map((item) => <option key={item}>{item}</option>)}
         </SelectField>
         <SelectField label="Semester" onChange={(event) => { setSemesterId(event.target.value); setCourseId(allOption) }} value={semesterId}>
           <option value={allOption}>All semesters</option>
@@ -677,30 +1232,33 @@ export function AdminDocumentsPage() {
           <option value={allOption}>All courses</option>
           {visibleCourses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
         </SelectField>
-      </Toolbar>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-1 pt-3">
+          <p className="text-xs font-semibold text-slate-500">{loading ? 'Refreshing materials…' : `${formatNumber(filtered.length)} of ${formatNumber(docs.length)} materials shown`}</p>
+          {filtersActive ? <Button onClick={clearFilters} size="sm" type="button" variant="ghost">Clear filters</Button> : null}
+        </div>
+      </Panel>
       {loading ? <Loading label="Loading documents" /> : filtered.length ? (
         <DataTable
-          columns={['Document', 'Semester / Course', 'Workspace', 'Status', 'Embeddings', 'Chunks', 'Pages', 'Actions']}
+          columns={['Document', 'Learning context', 'Content processing', 'Content', 'Uploaded', 'Actions']}
           rows={filtered.map((doc) => {
             const course = courseById.get(doc.courseId)
             const semester = semesterById.get(course?.semesterWorkspaceId)
+            const chapter = chapterById.get(doc.chapterId)
             return [
-            <Identity key="doc" subtitle={doc.type || 'File'} title={doc.displayName} />,
-            <Identity key="scope" subtitle={course ? `${course.code} · ${course.name}` : 'Course not assigned'} title={semester?.name || 'Semester not assigned'} />,
-            doc.subject || 'Course Knowledge Base',
-            <StatusBadge key="status" status={doc.status} />,
-            <StatusBadge key="embeddings" status={doc.embeddingStatus} />,
-            doc.chunks,
-            doc.pages,
+            <DocumentIdentity document={doc} key="doc" />,
+            <LearningContext chapter={chapter} course={course} key="scope" semester={semester} />,
+            <DocumentProcessing key="processing" status={doc.status} />,
+            <DocumentContentMeta document={doc} key="content" />,
+            <UploadMeta document={doc} key="uploaded" />,
             <RowActions key="actions">
-              <IconButton disabled={reindexingId === doc.id} label="Prepare embeddings" onClick={() => reindexDoc(doc)}><RefreshCcw className={reindexingId === doc.id ? 'animate-spin' : ''} size={15} /></IconButton>
-              {doc.canDelete ? (
-                <IconButton disabled={deletingId === doc.id} label="Delete" onClick={() => setDeleteTarget(doc)}><Trash2 size={15} /></IconButton>
-              ) : null}
+              <PreviewButton document={doc} />
+              <IconButton disabled={reindexingId === doc.id || doc.status === 'Processing' || doc.status === 'No text'} label={doc.status === 'No text' ? 'Document has no extractable text' : 'Prepare embeddings'} onClick={() => reindexDoc(doc)}><RefreshCcw className={reindexingId === doc.id ? 'animate-spin' : ''} size={15} /></IconButton>
+              {doc.canDelete ? <IconButton disabled={deletingId === doc.id} label="Delete" onClick={() => setDeleteTarget(doc)}><Trash2 size={15} /></IconButton> : null}
             </RowActions>,
           ]})}
         />
-      ) : <EmptyState title="No documents" description="The backend returned no documents for the current requester." />}
+      ) : <EmptyState action={filtersActive ? <Button onClick={clearFilters} type="button" variant="secondary">Clear filters</Button> : <Button onClick={openUploadDialog} type="button"><Plus size={16} />Upload first material</Button>} title={filtersActive ? 'No matching materials' : 'No course materials yet'} description={filtersActive ? 'Try a different name, status, semester, or course.' : 'Upload a PDF, DOCX, PPTX, or TXT file and assign it to a course to prepare it for chat.'} />}
       {deleteTarget ? (
         <ConfirmModal
           actionLabel="Delete document"
@@ -712,19 +1270,164 @@ export function AdminDocumentsPage() {
           onConfirm={confirmDelete}
           title="Delete document?"
         >
-          "{deleteTarget.displayName}" will be removed from the backend.
+          "{deleteTarget.displayName}" and its processed chunks will be removed from the course knowledge base.
         </ConfirmModal>
       ) : null}
-      {rejectTarget ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && setRejectTarget(null)}>
-        <section className="os-panel w-full max-w-md p-5">
-          <h2 className="text-lg font-black text-slate-950">Reject document</h2>
-          <p className="mt-2 truncate text-sm font-semibold text-slate-500">{rejectTarget.displayName}</p>
-          <textarea className="mt-4 min-h-28 w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm font-semibold outline-none focus:border-teal-400 focus:ring-4 focus:ring-teal-100" placeholder="Rejection reason" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} />
-          <div className="mt-4 flex justify-end gap-2"><Button variant="secondary" onClick={() => setRejectTarget(null)}>Cancel</Button><Button variant="danger" disabled={!rejectionReason.trim() || reviewingId === rejectTarget.id} onClick={rejectReview}>Reject</Button></div>
-        </section>
-      </div> : null}
+      {uploadOpen ? <DocumentUploadDialog
+        busy={uploading}
+        chapterId={uploadChapterId}
+        chapters={uploadChapters}
+        courseId={uploadCourseId}
+        courses={courses}
+        files={uploadFilesToSend}
+        onChapterChange={setUploadChapterId}
+        onClose={() => { if (!uploading) setUploadOpen(false) }}
+        onCourseChange={updateUploadCourse}
+        onFilesChange={selectUploadFiles}
+        onSubmit={uploadMaterials}
+      /> : null}
     </CrudPage>
   )
+}
+
+function DocumentOverview({ lastUpdatedAt, stats }) {
+  const items = [
+    { label: 'All materials', value: stats.total, detail: 'Stored course documents' },
+    { label: 'Ready for chat', value: stats.ready, detail: 'Embeddings prepared' },
+    { label: 'In progress', value: stats.processing, detail: 'Extraction or indexing' },
+    { label: 'Needs attention', value: stats.attention, detail: 'Failed or no extractable text' },
+  ]
+
+  return (
+    <Panel className="mb-4 overflow-hidden p-0">
+      <div className="grid divide-x divide-slate-100 md:grid-cols-4">
+        {items.map((item) => <div className="p-4" key={item.label}>
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{item.label}</p>
+          <p className="mt-1 text-2xl font-black tracking-tight tabular-nums text-slate-950">{formatNumber(item.value)}</p>
+          <p className="mt-1 text-xs font-medium text-slate-500">{item.detail}</p>
+        </div>)}
+      </div>
+      <div className="border-t border-slate-100 bg-white/45 px-4 py-2 text-right text-xs font-semibold text-slate-500">
+        {lastUpdatedAt ? `Last refreshed ${formatActivityTime(lastUpdatedAt)}` : 'Waiting for document data'}
+      </div>
+    </Panel>
+  )
+}
+
+function DocumentIdentity({ document }) {
+  return (
+    <div className="min-w-[13rem] max-w-xs">
+      <div className="flex items-start gap-2.5">
+        <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-teal-50 text-primary"><FileText size={15} /></div>
+        <p className="line-clamp-2 pt-0.5 text-sm font-black leading-5 text-slate-950" title={document.displayName}>{document.displayName || document.name || 'Untitled document'}</p>
+      </div>
+      <p className="mt-2 text-xs font-semibold text-slate-500">{document.type || 'FILE'} · {formatBytes(document.fileSizeBytes)}</p>
+    </div>
+  )
+}
+
+function LearningContext({ chapter, course, semester }) {
+  return (
+    <div className="min-w-[12rem]">
+      <p className="font-semibold text-slate-950">{course ? `${course.code} · ${course.name}` : 'Course not assigned'}</p>
+      <p className="mt-1 text-xs font-medium text-slate-500">{semester?.name || 'Semester not assigned'}</p>
+      <p className="mt-1 text-xs font-medium text-teal-700">{chapter ? `Chapter ${chapter.orderIndex}: ${chapter.title}` : 'No chapter assigned'}</p>
+    </div>
+  )
+}
+
+function DocumentProcessing({ status }) {
+  return (
+    <div className="min-w-[9rem]">
+      <StatusBadge status={status} />
+    </div>
+  )
+}
+
+function DocumentContentMeta({ document }) {
+  return (
+    <div className="min-w-[8rem] text-xs font-semibold text-slate-600">
+      <p className="tabular-nums text-slate-950">{formatDocumentCount(document.chunks, 'chunks')}</p>
+      <p className="mt-1 tabular-nums">{formatDocumentCount(document.pages, 'pages')}</p>
+    </div>
+  )
+}
+
+function UploadMeta({ document }) {
+  const uploadedAt = document.uploadedAt && document.uploadedAt !== '-' ? document.uploadedAt : '—'
+
+  return (
+    <div className="min-w-[8rem] text-xs font-semibold text-slate-600">
+      <p>{uploadedAt}</p>
+      {document.uploaderName ? <p className="mt-1 truncate text-slate-500" title={document.uploaderName}>{document.uploaderName}</p> : null}
+    </div>
+  )
+}
+
+function PreviewButton({ document }) {
+  const url = getDocumentPreviewUrl(document)
+  return <IconButton disabled={!url} label={url ? 'Preview material' : 'Preview unavailable'} onClick={() => { if (url) window.open(url, '_blank', 'noopener,noreferrer') }}><Eye size={15} /></IconButton>
+}
+
+function DocumentUploadDialog({ busy, chapterId, chapters, courseId, courses, files, onChapterChange, onClose, onCourseChange, onFilesChange, onSubmit }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onClose() }}>
+      <form aria-labelledby="document-upload-title" className="os-panel w-full max-w-lg p-5" onSubmit={(event) => { event.preventDefault(); onSubmit() }}>
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="text-xs font-semibold uppercase tracking-[0.08em] text-teal-700">Course knowledge</p><h2 className="mt-1 text-xl font-black tracking-tight text-slate-950" id="document-upload-title">Upload materials</h2><p className="mt-2 text-sm font-medium leading-6 text-slate-600">Files are processed and indexed with the active embedding workflow.</p></div>
+          <button aria-label="Close upload dialog" className="rounded-lg px-2 py-1 text-xs font-black text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={busy} onClick={onClose} type="button">Close</button>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <SelectField label="Destination course" onChange={(event) => onCourseChange(event.target.value)} value={courseId}>
+            <option value="">Select course</option>
+            {courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
+          </SelectField>
+          <SelectField disabled={!courseId || !chapters.length} label="Chapter" onChange={(event) => onChapterChange(event.target.value)} value={chapterId}>
+            <option value="">No chapter assigned</option>
+            {chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>Chapter {chapter.orderIndex}: {chapter.title}</option>)}
+          </SelectField>
+        </div>
+        <label className="mt-4 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-teal-200 bg-teal-50/45 p-4 text-center transition hover:border-teal-400 hover:bg-teal-50 disabled:cursor-not-allowed">
+          <Upload className="text-primary" size={21} />
+          <span className="mt-2 text-sm font-black text-slate-900">Choose PDF, DOCX, PPTX, or TXT files</span>
+          <span className="mt-1 text-xs font-medium text-slate-500">You can select multiple course materials at once.</span>
+          <input accept=".pdf,.docx,.pptx,.txt" className="sr-only" disabled={busy} multiple onChange={(event) => onFilesChange(event.target.files)} type="file" />
+        </label>
+        {files.length ? <ul className="mt-3 max-h-28 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white/70 px-3">
+          {files.map((file) => <li className="flex items-center justify-between gap-3 py-2 text-xs font-semibold text-slate-700" key={`${file.name}-${file.lastModified}`}><span className="min-w-0 truncate">{file.name}</span><span className="shrink-0 text-slate-500">{formatBytes(file.size)}</span></li>)}
+        </ul> : null}
+        <div className="mt-5 flex justify-end gap-2"><Button disabled={busy} onClick={onClose} type="button" variant="secondary">Cancel</Button><Button disabled={busy || !files.length || !courseId} type="submit">{busy ? 'Uploading…' : `Upload ${files.length || ''}`.trim()}</Button></div>
+      </form>
+    </div>
+  )
+}
+
+function getDocumentStats(documents) {
+  return documents.reduce((stats, document) => {
+    const readiness = getDocumentReadiness(document)
+    stats.total += 1
+    if (readiness === 'Prepared') stats.ready += 1
+    if (document.status === 'Processing' || readiness === 'Processing') stats.processing += 1
+    if (document.status === 'Failed' || document.status === 'No text') stats.attention += 1
+    return stats
+  }, { total: 0, ready: 0, processing: 0, attention: 0 })
+}
+
+function getDocumentReadiness(document) {
+  if (document.status === 'Failed' || document.status === 'No text') return document.status
+  if (document.status === 'Processing') return 'Processing'
+  if (document.status === 'Indexed' || document.embeddingStatus === 'Prepared') return 'Prepared'
+  if (Number.isFinite(document.embeddedChunks) && Number.isFinite(document.chunks) && document.chunks > 0 && document.embeddedChunks >= document.chunks) return 'Prepared'
+  return 'Not prepared'
+}
+
+function formatDocumentCount(value, label) {
+  return Number.isFinite(value) ? `${formatNumber(value)} ${label}` : `${label[0].toUpperCase()}${label.slice(1)} unavailable`
+}
+
+function isSupportedDocumentFile(file) {
+  const name = file?.name?.toLowerCase() ?? ''
+  return ['.pdf', '.docx', '.pptx', '.txt'].some((extension) => name.endsWith(extension))
 }
 
 export function AdminResearchDashboardPage() {
@@ -1043,7 +1746,7 @@ function Toolbar({ children }) {
   )
 }
 
-function MetricCard({ icon: Icon, label, value }) {
+function MetricCard({ detail, icon: Icon, label, linkTo, value }) {
   return (
     <Panel className="overflow-hidden p-4">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-r from-teal-100/45 to-transparent" />
@@ -1051,9 +1754,11 @@ function MetricCard({ icon: Icon, label, value }) {
         <div className="grid size-11 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50 text-primary shadow-sm">
           <Icon size={19} />
         </div>
-        <p className="truncate text-3xl font-black tracking-tight text-slate-950">{value}</p>
+        <p className="truncate text-3xl font-black tracking-tight tabular-nums text-slate-950">{value}</p>
       </div>
       <p className="relative mt-4 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
+      {detail ? <p className="relative mt-1 text-xs font-semibold text-slate-600">{detail}</p> : null}
+      {linkTo ? <Link className="relative mt-3 inline-flex items-center gap-1 text-xs font-black text-primary transition hover:text-teal-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500" to={linkTo}>View details <ArrowRight size={13} /></Link> : null}
     </Panel>
   )
 }
@@ -1101,6 +1806,8 @@ function ScoreStat({ label, value }) {
 }
 
 function DataTable({ columns, rows }) {
+  const reduceMotion = useReducedMotion()
+
   return (
     <Panel className="overflow-hidden">
       <div className="overflow-x-auto">
@@ -1112,9 +1819,16 @@ function DataTable({ columns, rows }) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((row, index) => (
-              <tr className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65" key={index}>
+              <motion.tr
+                className="bg-white/58 transition-colors duration-200 hover:bg-teal-50/65"
+                initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+                key={index}
+                transition={reduceMotion ? { duration: 0 } : { delay: Math.min(index * 0.045, 0.32), duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+                viewport={{ amount: 0.12, once: true }}
+                whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+              >
                 {row.map((cell, cellIndex) => <td className="px-4 py-4 align-top leading-6 text-slate-700" key={cellIndex}>{cell}</td>)}
-              </tr>
+              </motion.tr>
             ))}
           </tbody>
         </table>
@@ -1140,6 +1854,6 @@ function Loading({ label }) {
   return <Panel className="flex min-h-40 items-center justify-center gap-3 p-5 text-sm font-semibold text-slate-600"><Loader2 className="animate-spin text-primary" size={20} />{label}</Panel>
 }
 
-function Alert({ message }) {
-  return <div className="mb-4 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700"><AlertTriangle className="mt-0.5 shrink-0" size={17} />{message}</div>
+function Alert({ action, message }) {
+  return <div className="mb-4 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700"><div className="flex min-w-0 items-start gap-3"><AlertTriangle className="mt-0.5 shrink-0" size={17} /><p>{message}</p></div>{action}</div>
 }
