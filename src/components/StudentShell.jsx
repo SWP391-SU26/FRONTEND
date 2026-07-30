@@ -7,11 +7,14 @@ import {
 import {
   deleteSession, getSessions, pinSession, renameSession,
 } from '../services/chatService.js'
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { LanguageSwitch } from './LanguageSwitch.jsx'
 import StudentSidebar from './StudentSidebar.jsx'
 import { Button, ConfirmModal, IconButton } from './ui.jsx'
 
 export default function StudentShell({ children, mobileTitle = 'FStu Learning Workspace' }) {
   const navigate = useNavigate()
+  const { t } = useLocale()
   const user = getSavedUser()
   const [sessions, setSessions] = useState([])
   const [search, setSearch] = useState('')
@@ -114,8 +117,9 @@ export default function StudentShell({ children, mobileTitle = 'FStu Learning Wo
       />
       <section className="min-w-0 flex-1">
         <header className="flex h-14 items-center gap-3 border-b border-slate-200 px-4 lg:hidden">
-          <IconButton label="Mở thanh bên" onClick={() => setOpen(true)}><Menu size={19} /></IconButton>
+          <IconButton label={t('sidebar.open')} onClick={() => setOpen(true)}><Menu size={19} /></IconButton>
           <span className="truncate font-bold text-slate-900">{mobileTitle}</span>
+          <span className="ml-auto"><LanguageSwitch compact /></span>
         </header>
         {children}
       </section>
@@ -130,13 +134,13 @@ export default function StudentShell({ children, mobileTitle = 'FStu Learning Wo
       ) : null}
       {deleting ? (
         <ConfirmModal
-          actionLabel="Xóa"
+          actionLabel={t('common.delete')}
           busy={busyId === deleting.id}
           onCancel={() => setDeleting(null)}
           onConfirm={confirmDelete}
-          title="Xóa cuộc trò chuyện?"
+          title={t('sidebar.deleteTitle')}
         >
-          “{deleting.title}” sẽ bị xóa khỏi lịch sử của bạn.
+          {t('sidebar.deleteBody', { title: deleting.title })}
         </ConfirmModal>
       ) : null}
     </div>
@@ -144,6 +148,7 @@ export default function StudentShell({ children, mobileTitle = 'FStu Learning Wo
 }
 
 function RenameDialog({ busy, onCancel, onChange, onSubmit, title }) {
+  const { t } = useLocale()
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"
@@ -151,11 +156,11 @@ function RenameDialog({ busy, onCancel, onChange, onSubmit, title }) {
     >
       <form className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl" onSubmit={onSubmit}>
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-black text-slate-950">Đổi tên cuộc trò chuyện</h2>
-          <IconButton label="Đóng" onClick={onCancel}><X size={17} /></IconButton>
+          <h2 className="text-lg font-black text-slate-950">{t('sidebar.renameTitle')}</h2>
+          <IconButton label={t('common.close')} onClick={onCancel}><X size={17} /></IconButton>
         </div>
         <label className="mt-4 block text-sm font-bold text-slate-700">
-          Tiêu đề
+          {t('sidebar.titleLabel')}
           <input
             autoFocus
             className="mt-2 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm font-semibold outline-none focus:border-teal-600 focus:ring-4 focus:ring-teal-100"
@@ -165,8 +170,8 @@ function RenameDialog({ busy, onCancel, onChange, onSubmit, title }) {
           />
         </label>
         <div className="mt-5 flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onCancel}>Hủy</Button>
-          <Button disabled={busy || !title.trim()} type="submit">Lưu</Button>
+          <Button type="button" variant="secondary" onClick={onCancel}>{t('common.cancel')}</Button>
+          <Button disabled={busy || !title.trim()} type="submit">{t('common.save')}</Button>
         </div>
       </form>
     </div>

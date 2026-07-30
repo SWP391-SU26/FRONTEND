@@ -152,10 +152,43 @@ body:has(.chat-shell-page) {
   margin: 0;
 }
 
+.chat-markdown h2,
+.chat-markdown h3 {
+  color: rgb(15 23 42);
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.chat-markdown h2 {
+  font-size: 1.05rem;
+}
+
+.chat-markdown h3 {
+  font-size: 0.98rem;
+}
+
+.chat-markdown strong {
+  color: rgb(15 23 42);
+  font-weight: 700;
+}
+
 .chat-markdown ul,
 .chat-markdown ol {
   margin: 0.75rem 0 0;
   padding-left: 1.35rem;
+}
+
+.chat-markdown ul {
+  list-style: disc;
+}
+
+.chat-markdown ol {
+  list-style: decimal;
+}
+
+.chat-markdown li::marker {
+  color: rgb(13 148 136);
+  font-weight: 700;
 }
 
 .chat-markdown li + li {

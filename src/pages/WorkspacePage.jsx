@@ -29,7 +29,9 @@ import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import 'katex/dist/katex.min.css'
+import { LanguageSwitch } from '../components/LanguageSwitch.jsx'
 import StudentSidebar from '../components/StudentSidebar.jsx'
+import { useLocale } from '../i18n/LocaleContext.jsx'
 import {
   createSession,
   deleteSession,
@@ -53,13 +55,26 @@ import { cn } from '../utils/cn.js'
 const EMPTY_MATERIALS = { chapters: [], unclassifiedMaterials: [] }
 const CHAT_DEADLINE_MS = 55_000
 const PHASE_LABELS = {
-  SCOPE_CHECK: 'Đang kiểm tra phạm vi tài liệu',
-  RETRIEVAL: 'Đang tìm nội dung liên quan',
-  GENERATION_START: 'Đang tạo câu trả lời',
+  SCOPE_CHECK: 'chat.phaseScope',
+  RETRIEVAL: 'chat.phaseRetrieval',
+  GENERATION_START: 'chat.phaseGeneration',
+}
+
+const FALLBACK_T = (key, params = {}) => {
+  const labels = {
+    'chat.aiTyping': 'AI đang trả lời',
+    'chat.sourceDocument': 'Tài liệu nguồn',
+    'chat.pagePrefix': 'tr.',
+    'chat.respondedIn': `Phản hồi trong ${params.time ?? ''}`,
+    'chat.copy': 'Sao chép',
+    'chat.saveAsNote': 'Lưu thành ghi chú',
+  }
+  return labels[key] ?? key
 }
 
 export default function WorkspacePage() {
   const navigate = useNavigate()
+  const { t } = useLocale()
   const [urlSearchParams, setUrlSearchParams] = useSearchParams()
   const user = getSavedUser()
   const [semesters, setSemesters] = useState([])
@@ -116,7 +131,7 @@ export default function WorkspacePage() {
         ? Boolean(course && selectedDocumentIds.length)
         : Boolean(course?.processedDocumentCount)
   const scopeLabel = session?.scopeLabel
-    || buildScopeLabel(scopeType, semester, course, selectedDocumentIds.length)
+    || buildScopeLabel(scopeType, semester, course, selectedDocumentIds.length, t)
 
   useEffect(() => {
     if (!answering) return undefined
@@ -148,9 +163,12 @@ export default function WorkspacePage() {
         )
         if (requestedSession) setSession(requestedSession)
       })
-      .catch((error) => setStreamError({ message: readError(error, 'Không thể tải không gian học tập.') }))
+      .catch((error) => setStreamError({ message: readError(error, t('chat.loadWorkspaceError'), t) }))
       .finally(() => active && setLoading(false))
     return () => { active = false }
+  // Keep initial workspace loading independent from locale changes so switching
+  // language does not reset chat scope or the selected session.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -189,10 +207,12 @@ export default function WorkspacePage() {
     getMessages(session.id)
       .then((items) => active && setMessages(items))
       .catch((error) => active && setStreamError({
-        message: readError(error, 'Không thể tải cuộc trò chuyện.'),
+        message: readError(error, t('chat.loadMessagesError'), t),
       }))
       .finally(() => active && setLoadingMessages(false))
     return () => { active = false }
+  // Keep message history stable while toggling UI language.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id])
 
   useEffect(() => {
@@ -395,7 +415,7 @@ export default function WorkspacePage() {
       setSession(refreshed.find((item) => item.id === activeSession.id) ?? activeSession)
     } catch (error) {
       if (error.code === 'CHAT_DEADLINE_EXCEEDED') {
-        error.message = 'Đã quá 55 giây. Hệ thống đã dừng xử lý để tránh bạn phải chờ lâu.'
+        error.message = t('chat.deadline')
       }
       setMessages((current) => current.filter((message) => message.id !== pendingAssistantId))
       if (activeSession?.id) {
@@ -417,10 +437,10 @@ export default function WorkspacePage() {
         }
       }
       if (error.name === 'AbortError') {
-        setStreamError({ message: 'Đã dừng tạo câu trả lời.', question })
+        setStreamError({ message: t('chat.stopped'), question })
       } else {
         setStreamError({
-          message: readError(error, 'AI chưa phản hồi. Bạn có thể thử lại.'),
+          message: readError(error, t('chat.fallbackError'), t),
           question,
           code: error.code,
           elapsedMs: error.elapsedMs,
@@ -490,7 +510,7 @@ export default function WorkspacePage() {
   function prepareNote(message) {
     setNoteDraft({
       noteTitle: session?.title && session.title !== 'New conversation'
-        ? session.title : 'Ghi chú từ AI',
+        ? session.title : t('chat.defaultNoteTitle'),
       noteContent: message.content,
     })
     setDrawerMode('notes')
@@ -521,11 +541,11 @@ export default function WorkspacePage() {
   }
 
   if (loading) {
-    return <FullScreenState icon={Loader2} spin title="Đang tải không gian học tập" />
+    return <FullScreenState icon={Loader2} spin title={t('chat.loadingWorkspace')} />
   }
 
   if (!semesters.length) {
-    return <FullScreenState icon={Archive} title="Chưa có tài liệu khả dụng" />
+    return <FullScreenState icon={Archive} title={t('chat.noAvailableDocuments')} />
   }
 
   return (
@@ -557,7 +577,8 @@ export default function WorkspacePage() {
           onNew={startNewChat}
           onSources={() => setDrawerMode('sources')}
           scopeLabel={scopeLabel}
-          title={session?.title || 'Cuộc trò chuyện mới'}
+          t={t}
+          title={session?.title || t('chat.newConversation')}
         />
 
         <ChatThread
@@ -571,6 +592,7 @@ export default function WorkspacePage() {
           answerElapsedMs={answerElapsedMs}
           processingPhase={processingPhase}
           streamError={streamError}
+          t={t}
           onReuseQuestion={(question) => { setInput(question); setStreamError(null) }}
           endRef={messagesEndRef}
         />
@@ -584,6 +606,7 @@ export default function WorkspacePage() {
           onSubmit={submit}
           scopeLabel={scopeLabel}
           scopeValid={scopeValid}
+          t={t}
         />
 
         <ScopePicker
@@ -602,6 +625,7 @@ export default function WorkspacePage() {
           selectedDocumentIds={selectedDocumentIds}
           semesterId={semesterId}
           semesters={semesters}
+          t={t}
         />
       </main>
 
@@ -614,6 +638,7 @@ export default function WorkspacePage() {
         onDraftChange={setNoteDraft}
         onSaveNote={submitNote}
         savingNote={savingNote}
+        t={t}
       />
 
       {renaming ? (
@@ -637,29 +662,32 @@ export default function WorkspacePage() {
   )
 }
 
-function ChatTopbar({ onMenu, onNew, onSources, scopeLabel, title }) {
+function ChatTopbar({ onMenu, onNew, onSources, scopeLabel, t, title }) {
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 border-b border-slate-200 px-3 sm:px-5">
-      <IconAction className="lg:hidden" label="Mở lịch sử" onClick={onMenu}><Menu size={19} /></IconAction>
+      <IconAction className="lg:hidden" label={t('chat.openHistory')} onClick={onMenu}><Menu size={19} /></IconAction>
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-sm font-semibold text-slate-900">{title}</h1>
         <p className="truncate text-xs text-slate-500">{scopeLabel}</p>
       </div>
-      <IconAction label="Nguồn trích dẫn" onClick={onSources}><PanelRight size={18} /></IconAction>
-      <IconAction label="Chat mới" onClick={onNew}><Plus size={18} /></IconAction>
+      <span className="hidden sm:inline-flex">
+        <LanguageSwitch compact />
+      </span>
+      <IconAction label={t('chat.sources')} onClick={onSources}><PanelRight size={18} /></IconAction>
+      <IconAction label={t('chat.newChat')} onClick={onNew}><Plus size={18} /></IconAction>
     </header>
   )
 }
 
 function ChatThread({
   activeScopeLabel, answerElapsedMs, copiedId, endRef, loading, messages, onCitation, onCopy, onReuseQuestion,
-  onSave, processingPhase, streamError,
+  onSave, processingPhase, streamError, t,
 }) {
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto" aria-label="Nội dung trò chuyện">
+    <section className="min-h-0 flex-1 overflow-y-auto" aria-label={t('chat.threadLabel')}>
       <div className="mx-auto flex min-h-full w-full max-w-[820px] flex-col px-4 pb-36 pt-8 sm:px-8">
         {loading ? (
-          <div className="space-y-7" aria-label="Đang tải tin nhắn">
+          <div className="space-y-7" aria-label={t('chat.loadingMessages')}>
             <MessageSkeleton /><MessageSkeleton />
           </div>
         ) : messages.length ? (
@@ -672,10 +700,11 @@ function ChatThread({
                 onCitation={onCitation}
                 onCopy={() => onCopy(message)}
                 onSave={() => onSave(message)}
+                t={t}
               />
             ))}
             {processingPhase ? (
-              <ProcessingStatus elapsedMs={answerElapsedMs} phase={processingPhase} />
+              <ProcessingStatus elapsedMs={answerElapsedMs} phase={processingPhase} t={t} />
             ) : null}
             {streamError ? (
               <div className="ml-11 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -686,7 +715,7 @@ function ChatThread({
                     onClick={() => onReuseQuestion(streamError.question)}
                     type="button"
                   >
-                    Thử lại
+                    {t('common.retry')}
                   </button>
                 ) : null}
               </div>
@@ -698,9 +727,9 @@ function ChatThread({
               <div className="mx-auto grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-800">
                 <Bot size={23} />
               </div>
-              <h2 className="mt-5 text-2xl font-semibold text-slate-950">Bạn muốn học gì hôm nay?</h2>
+              <h2 className="mt-5 text-2xl font-semibold text-slate-950">{t('chat.welcomeTitle')}</h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-600">
-                Đặt câu hỏi trong phạm vi <strong>{activeScopeLabel}</strong>. FStu sẽ trả lời từ tài liệu và kèm nguồn để bạn kiểm tra.
+                {t('chat.welcomeBody', { scope: activeScopeLabel })}
               </p>
             </div>
           </div>
@@ -711,7 +740,7 @@ function ChatThread({
   )
 }
 
-function ChatMessage({ copied, message, onCitation, onCopy, onSave }) {
+function ChatMessage({ copied, message, onCitation, onCopy, onSave, t }) {
   if (message.role === 'user') {
     return (
       <article className="flex justify-end">
@@ -728,11 +757,12 @@ function ChatMessage({ copied, message, onCitation, onCopy, onSave }) {
       onCitation={onCitation}
       onCopy={onCopy}
       onSave={onSave}
+      t={t}
     />
   )
 }
 
-export function AssistantMessage({ copied, message, onCitation, onCopy, onSave }) {
+export function AssistantMessage({ copied, message, onCitation, onCopy, onSave, t = FALLBACK_T }) {
   const shouldAnimate = Boolean(message.animateResponse && message.content)
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const animate = shouldAnimate && !reducedMotion
@@ -772,7 +802,7 @@ export function AssistantMessage({ copied, message, onCitation, onCopy, onSave }
             {isTyping ? <span aria-hidden="true" className="typewriter-caret" /> : null}
           </div>
         ) : (
-          <span className="inline-flex gap-1 py-3" aria-label="AI đang trả lời">
+          <span className="inline-flex gap-1 py-3" aria-label={t('chat.aiTyping')}>
             {[0, 1, 2].map((item) => <span className="size-1.5 animate-pulse rounded-full bg-slate-400" key={item} />)}
           </span>
         )}
@@ -786,8 +816,8 @@ export function AssistantMessage({ copied, message, onCitation, onCopy, onSave }
                 type="button"
               >
                 <span className="font-bold text-teal-700">[{index + 1}]</span>
-                <span className="max-w-52 truncate">{citation.documentTitle || 'Tài liệu nguồn'}</span>
-                {citation.pageStart ? <span>· tr. {citation.pageStart}</span> : null}
+                <span className="max-w-52 truncate">{citation.documentTitle || t('chat.sourceDocument')}</span>
+                {citation.pageStart ? <span>· {t('chat.pagePrefix')} {citation.pageStart}</span> : null}
               </button>
             ))}
           </div>
@@ -795,15 +825,15 @@ export function AssistantMessage({ copied, message, onCitation, onCopy, onSave }
         {!isTyping && !message.streaming && message.content && Number.isFinite(message.latencyMs) ? (
           <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-500">
             <Clock3 size={13} />
-            Phản hồi trong {formatResponseTime(message.latencyMs)}
+            {t('chat.respondedIn', { time: formatResponseTime(message.latencyMs) })}
           </p>
         ) : null}
         {!isTyping && !message.streaming && message.content ? (
           <div className="mt-3 flex gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-            <IconAction label="Sao chép" onClick={onCopy}>
+            <IconAction label={t('chat.copy')} onClick={onCopy}>
               {copied ? <Check className="text-emerald-600" size={15} /> : <Clipboard size={15} />}
             </IconAction>
-            <IconAction label="Lưu thành ghi chú" onClick={onSave}><NotebookPen size={15} /></IconAction>
+            <IconAction label={t('chat.saveAsNote')} onClick={onSave}><NotebookPen size={15} /></IconAction>
           </div>
         ) : null}
       </div>
@@ -833,7 +863,7 @@ function MarkdownMessage({ content }) {
   )
 }
 
-function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmit, scopeLabel, scopeValid }) {
+function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmit, scopeLabel, scopeValid, t }) {
   const textareaRef = useRef(null)
   useEffect(() => {
     const element = textareaRef.current
@@ -847,7 +877,7 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
       <form className="pointer-events-auto mx-auto max-w-[820px]" onSubmit={onSubmit}>
         <div className="rounded-2xl border border-slate-300 bg-white p-2 shadow-[0_6px_18px_rgba(15,23,42,.10)] focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
           <textarea
-            aria-label="Câu hỏi"
+            aria-label={t('chat.questionLabel')}
             className="block max-h-[180px] min-h-12 w-full resize-none bg-transparent px-2 py-2 text-[15px] leading-6 text-slate-900 outline-none placeholder:text-slate-500"
             disabled={answering || !scopeValid}
             onChange={(event) => onChange(event.target.value)}
@@ -857,7 +887,7 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
                 onSubmit()
               }
             }}
-            placeholder={scopeValid ? 'Hỏi FStu về tài liệu của bạn…' : 'Chọn phạm vi tài liệu trước khi hỏi'}
+            placeholder={scopeValid ? t('chat.placeholderReady') : t('chat.placeholderNoScope')}
             ref={textareaRef}
             rows={1}
             value={input}
@@ -875,7 +905,7 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
             <span className="flex-1" />
             {answering ? (
               <button
-                aria-label="Dừng tạo câu trả lời"
+                aria-label={t('chat.stop')}
                 className="grid size-9 place-items-center rounded-full bg-slate-900 text-white hover:bg-slate-700"
                 onClick={onStop}
                 type="button"
@@ -884,7 +914,7 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
               </button>
             ) : (
               <button
-                aria-label="Gửi câu hỏi"
+                aria-label={t('chat.send')}
                 className="grid size-9 place-items-center rounded-full bg-teal-700 text-white hover:bg-teal-800 disabled:bg-slate-300"
                 disabled={!input.trim() || !scopeValid}
                 type="submit"
@@ -895,7 +925,7 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
           </div>
         </div>
         <p className="mt-1.5 text-center text-[11px] text-slate-500">
-          FStu có thể mắc lỗi. Hãy kiểm tra lại thông tin trong nguồn trích dẫn.
+          {t('chat.disclaimer')}
         </p>
       </form>
     </div>
@@ -905,14 +935,14 @@ function ChatComposer({ answering, input, onChange, onOpenScope, onStop, onSubmi
 function ScopePicker({
   courseId, courses, documents, locked, onChangeCourse, onChangeScope, onChangeSemester,
   onClose, onToggleDocument, open, personalDocuments, scopeType, selectedDocumentIds,
-  semesterId, semesters,
+  semesterId, semesters, t,
 }) {
   if (!open) return null
   const selectable = scopeType === 'PERSONAL' ? personalDocuments : documents
   return (
     <div className="fixed inset-0 z-40 bg-slate-950/20" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <motion.section
-        aria-label="Chọn phạm vi trả lời"
+        aria-label={t('chat.scopeTitle')}
         className="absolute bottom-0 left-0 right-0 max-h-[82vh] overflow-y-auto rounded-t-2xl bg-white p-4 shadow-2xl sm:bottom-28 sm:left-1/2 sm:right-auto sm:w-[520px] sm:-translate-x-1/2 sm:rounded-xl sm:border sm:border-slate-200"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
@@ -920,20 +950,20 @@ function ScopePicker({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-slate-950">Phạm vi trả lời</h2>
+            <h2 className="font-semibold text-slate-950">{t('chat.scopeTitle')}</h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              {locked ? 'Phạm vi đã được khóa cho cuộc trò chuyện này.' : 'Chỉ các nguồn đã chọn được dùng để trả lời.'}
+              {locked ? t('chat.scopeLocked') : t('chat.scopeHint')}
             </p>
           </div>
-          <IconAction label="Đóng" onClick={onClose}><X size={18} /></IconAction>
+          <IconAction label={t('common.close')} onClick={onClose}><X size={18} /></IconAction>
         </div>
 
         <div className="mt-4 grid grid-cols-4 rounded-lg bg-slate-100 p-1">
           {[
-            ['PERSONAL', 'Cá nhân', UserRound],
-            ['DOCUMENTS', 'Tài liệu', FileText],
-            ['COURSE', 'Môn học', Library],
-            ['SEMESTER', 'Học kỳ', Archive],
+            ['PERSONAL', t('chat.personal'), UserRound],
+            ['DOCUMENTS', t('chat.documents'), FileText],
+            ['COURSE', t('chat.course'), Library],
+            ['SEMESTER', t('chat.semester'), Archive],
           ].map(([value, label, Icon]) => (
             <button
               className={cn(
@@ -952,7 +982,7 @@ function ScopePicker({
 
         {scopeType !== 'PERSONAL' ? (
           <label className="mt-4 block text-xs font-medium text-slate-600">
-            Học kỳ
+            {t('chat.semester')}
             <select
               className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               disabled={locked}
@@ -965,7 +995,7 @@ function ScopePicker({
         ) : null}
         {!['PERSONAL', 'SEMESTER'].includes(scopeType) ? (
           <label className="mt-3 block text-xs font-medium text-slate-600">
-            Môn học
+            {t('chat.course')}
             <select
               className="mt-1 h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               disabled={locked}
@@ -979,11 +1009,11 @@ function ScopePicker({
 
         {['PERSONAL', 'DOCUMENTS'].includes(scopeType) ? (
           <div className="mt-4">
-            <p className="text-xs font-medium text-slate-600">Tài liệu</p>
+            <p className="text-xs font-medium text-slate-600">{t('chat.documents')}</p>
             <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
               {selectable.length ? selectable.map((item) => {
                 const id = item.documentId ?? item.id
-                const name = item.originalFilename ?? item.displayName ?? item.name ?? 'Tài liệu'
+                const name = item.originalFilename ?? item.displayName ?? item.name ?? t('chat.documents')
                 return (
                   <label className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-slate-50" key={id}>
                     <input
@@ -996,7 +1026,7 @@ function ScopePicker({
                     <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{name}</span>
                   </label>
                 )
-              }) : <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm text-slate-500">Chưa có tài liệu đã xử lý.</p>}
+              }) : <p className="rounded-lg bg-slate-50 px-3 py-4 text-sm text-slate-500">{t('chat.noProcessedDocuments')}</p>}
             </div>
           </div>
         ) : null}
@@ -1007,14 +1037,14 @@ function ScopePicker({
           type="button"
         >
           {locked ? <Lock size={14} /> : <Check size={14} />}
-          {locked ? 'Đã khóa phạm vi' : 'Dùng phạm vi này'}
+          {locked ? t('chat.lockedScope') : t('chat.useScope')}
         </button>
       </motion.section>
     </div>
   )
 }
 
-function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraftChange, onSaveNote, savingNote }) {
+function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraftChange, onSaveNote, savingNote, t }) {
   return (
     <AnimatePresence>
       {mode ? (
@@ -1033,30 +1063,30 @@ function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraft
             transition={{ duration: 0.2 }}
           >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 px-4">
-              <h2 className="font-semibold">{mode === 'sources' ? 'Nguồn trích dẫn' : 'Ghi chú học tập'}</h2>
-              <IconAction label="Đóng panel" onClick={onClose}><X size={18} /></IconAction>
+              <h2 className="font-semibold">{mode === 'sources' ? t('chat.sources') : t('chat.notes')}</h2>
+              <IconAction label={t('common.close')} onClick={onClose}><X size={18} /></IconAction>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {mode === 'sources' ? (
-                activeCitation ? <CitationDetail citation={activeCitation} /> : (
-                  <DrawerEmpty text="Chọn một nguồn dưới câu trả lời để xem đoạn trích." />
+                activeCitation ? <CitationDetail citation={activeCitation} t={t} /> : (
+                  <DrawerEmpty text={t('chat.selectSourceHint')} />
                 )
               ) : noteDraft ? (
                 <form onSubmit={onSaveNote}>
-                  <label className="text-xs font-medium text-slate-600">Tiêu đề</label>
+                  <label className="text-xs font-medium text-slate-600">{t('chat.noteTitle')}</label>
                   <input
                     className="mt-1 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-teal-500"
                     onChange={(event) => onDraftChange({ ...noteDraft, noteTitle: event.target.value })}
                     value={noteDraft.noteTitle}
                   />
-                  <label className="mt-4 block text-xs font-medium text-slate-600">Nội dung</label>
+                  <label className="mt-4 block text-xs font-medium text-slate-600">{t('chat.noteContent')}</label>
                   <textarea
                     className="mt-1 min-h-48 w-full rounded-lg border border-slate-200 p-3 text-sm leading-6 outline-none focus:border-teal-500"
                     onChange={(event) => onDraftChange({ ...noteDraft, noteContent: event.target.value })}
                     value={noteDraft.noteContent}
                   />
                   <button className="mt-3 h-10 w-full rounded-lg bg-teal-700 text-sm font-semibold text-white disabled:bg-slate-300" disabled={savingNote} type="submit">
-                    {savingNote ? 'Đang lưu…' : 'Lưu ghi chú'}
+                    {savingNote ? t('chat.savingNote') : t('chat.saveNote')}
                   </button>
                 </form>
               ) : notes.length ? (
@@ -1066,7 +1096,7 @@ function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraft
                     <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{note.noteContent}</p>
                   </article>
                 ))}</div>
-              ) : <DrawerEmpty text="Chưa có ghi chú trong phạm vi này." />}
+              ) : <DrawerEmpty text={t('chat.noNotes')} />}
             </div>
           </motion.aside>
         </motion.div>
@@ -1075,24 +1105,24 @@ function DetailDrawer({ activeCitation, mode, noteDraft, notes, onClose, onDraft
   )
 }
 
-function CitationDetail({ citation }) {
+function CitationDetail({ citation, t }) {
   return (
     <article>
       <div className="flex items-center gap-2 text-sm font-semibold text-teal-800">
         <span>[{citation.citationNumber || 1}]</span>
-        <span>{citation.documentTitle || 'Tài liệu nguồn'}</span>
+        <span>{citation.documentTitle || t('chat.sourceDocument')}</span>
       </div>
       <p className="mt-1 text-xs text-slate-500">
         {citation.pageStart
-          ? `Trang ${citation.pageStart}${citation.pageEnd && citation.pageEnd !== citation.pageStart ? `–${citation.pageEnd}` : ''}`
-          : 'Không có thông tin trang'}
+          ? `${t('chat.pagePrefix')} ${citation.pageStart}${citation.pageEnd && citation.pageEnd !== citation.pageStart ? `-${citation.pageEnd}` : ''}`
+          : t('chat.noPage')}
       </p>
       <blockquote className="mt-4 rounded-lg bg-slate-50 p-4 text-sm leading-7 text-slate-700">
-        {citation.quoteText || 'Không có đoạn trích xem trước.'}
+        {citation.quoteText || t('chat.noPreview')}
       </blockquote>
       {citation.documentId ? (
         <Link className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-teal-700" to={`/library/documents/${citation.documentId}`}>
-          Mở tài liệu <ExternalLink size={14} />
+          {t('chat.openDocument')} <ExternalLink size={14} />
         </Link>
       ) : null}
     </article>
@@ -1100,10 +1130,11 @@ function CitationDetail({ citation }) {
 }
 
 function RenameDialog({ busy, onCancel, onChange, onSubmit, title }) {
+  const { t } = useLocale()
   return (
     <DialogShell onCancel={onCancel}>
       <form onSubmit={onSubmit}>
-        <h2 className="text-lg font-semibold">Đổi tên cuộc trò chuyện</h2>
+        <h2 className="text-lg font-semibold">{t('sidebar.renameTitle')}</h2>
         <input
           autoFocus
           className="mt-4 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
@@ -1111,20 +1142,21 @@ function RenameDialog({ busy, onCancel, onChange, onSubmit, title }) {
           onChange={(event) => onChange(event.target.value)}
           value={title}
         />
-        <DialogActions busy={busy} confirmLabel="Lưu" onCancel={onCancel} />
+        <DialogActions busy={busy} confirmLabel={t('common.save')} onCancel={onCancel} />
       </form>
     </DialogShell>
   )
 }
 
 function ConfirmDeleteDialog({ busy, onCancel, onConfirm, title }) {
+  const { t } = useLocale()
   return (
     <DialogShell onCancel={onCancel}>
-      <h2 className="text-lg font-semibold">Xóa cuộc trò chuyện?</h2>
+      <h2 className="text-lg font-semibold">{t('sidebar.deleteTitle')}</h2>
       <p className="mt-2 text-sm leading-6 text-slate-600">
-        “{title}” sẽ bị xóa khỏi lịch sử của bạn.
+        {t('sidebar.deleteBody', { title })}
       </p>
-      <DialogActions busy={busy} confirmLabel="Xóa" danger onCancel={onCancel} onConfirm={onConfirm} />
+      <DialogActions busy={busy} confirmLabel={t('common.delete')} danger onCancel={onCancel} onConfirm={onConfirm} />
     </DialogShell>
   )
 }
@@ -1138,29 +1170,30 @@ function DialogShell({ children, onCancel }) {
 }
 
 function DialogActions({ busy, confirmLabel, danger, onCancel, onConfirm }) {
+  const { t } = useLocale()
   return (
     <div className="mt-5 flex justify-end gap-2">
-      <button className="h-10 rounded-lg px-4 text-sm font-medium text-slate-600 hover:bg-slate-100" disabled={busy} onClick={onCancel} type="button">Hủy</button>
+      <button className="h-10 rounded-lg px-4 text-sm font-medium text-slate-600 hover:bg-slate-100" disabled={busy} onClick={onCancel} type="button">{t('common.cancel')}</button>
       <button
         className={cn('h-10 rounded-lg px-4 text-sm font-semibold text-white disabled:bg-slate-300', danger ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-700 hover:bg-teal-800')}
         disabled={busy}
         onClick={onConfirm}
         type={onConfirm ? 'button' : 'submit'}
       >
-        {busy ? 'Đang xử lý…' : confirmLabel}
+        {busy ? t('common.deleting') : confirmLabel}
       </button>
     </div>
   )
 }
 
-function ProcessingStatus({ elapsedMs, phase }) {
+function ProcessingStatus({ elapsedMs, phase, t }) {
   const warning = elapsedMs >= 40_000
   return (
     <div className="ml-11 max-w-sm space-y-2 text-sm text-slate-500" role="status">
       <div className="flex items-center justify-between gap-4">
         <span className="inline-flex min-w-0 items-center gap-2">
           <Loader2 className={cn('shrink-0 animate-spin', warning ? 'text-amber-600' : 'text-teal-700')} size={15} />
-          <span className="truncate">{PHASE_LABELS[phase] || 'Đang xử lý'}</span>
+          <span className="truncate">{PHASE_LABELS[phase] ? t(PHASE_LABELS[phase]) : t('chat.processingDefault')}</span>
         </span>
         <span className={cn('shrink-0 font-mono text-xs tabular-nums', warning && 'font-semibold text-amber-700')}>
           {formatTimer(elapsedMs)}
@@ -1244,11 +1277,11 @@ function deduplicateMaterials(value) {
   return [...map.values()]
 }
 
-function buildScopeLabel(type, semester, course, count) {
-  if (type === 'PERSONAL') return `${count} tài liệu cá nhân`
-  if (type === 'SEMESTER') return semester?.semesterName || 'Học kỳ'
-  const courseLabel = course ? `${course.courseCode} · ${course.courseName}` : 'Môn học'
-  return type === 'DOCUMENTS' ? `${count} tài liệu · ${courseLabel}` : courseLabel
+function buildScopeLabel(type, semester, course, count, t) {
+  if (type === 'PERSONAL') return t('chat.scopePersonalLabel', { count })
+  if (type === 'SEMESTER') return semester?.semesterName || t('chat.defaultSemester')
+  const courseLabel = course ? `${course.courseCode} · ${course.courseName}` : t('chat.defaultCourse')
+  return type === 'DOCUMENTS' ? t('chat.scopeDocumentsLabel', { count, course: courseLabel }) : courseLabel
 }
 
 function isProcessedDocument(document) {
@@ -1260,7 +1293,7 @@ function dateValue(value) {
   return Number.isNaN(result) ? 0 : result
 }
 
-function readError(error, fallback) {
-  if (error?.status === 403) return 'Bạn không có quyền truy cập nội dung này.'
+function readError(error, fallback, t = null) {
+  if (error?.status === 403) return t ? t('chat.forbidden') : 'Bạn không có quyền truy cập nội dung này.'
   return error?.message || fallback
 }

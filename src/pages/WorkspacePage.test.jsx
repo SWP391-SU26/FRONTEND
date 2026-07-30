@@ -71,4 +71,35 @@ describe('AssistantMessage typewriter', () => {
 
     expect(screen.getByText('Nội dung lịch sử')).toBeInTheDocument()
   })
+
+  it('renders structured markdown answers as headings, lists, and tables', () => {
+    render(
+      <AssistantMessage
+        copied={false}
+        message={{
+          id: 'assistant-markdown',
+          role: 'assistant',
+          content: [
+            '### Trả lời',
+            '',
+            '- **Luận điểm:** Vật chất có trước ý thức.',
+            '- **Ý nghĩa:** Ý thức phản ánh thế giới vật chất.',
+            '',
+            '| Tiêu chí | Nội dung |',
+            '|---|---|',
+            '| Quan hệ | Vật chất quyết định ý thức |',
+          ].join('\n'),
+          citations: [],
+          streaming: false,
+        }}
+        onCitation={vi.fn()}
+        onCopy={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Trả lời' })).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByRole('table')).toBeInTheDocument()
+  })
 })

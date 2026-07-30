@@ -27,6 +27,7 @@ import {
 } from '../services/documentService.js'
 import { deleteFile } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
+import { formatFileSize } from '../utils/fileSize.js'
 
 function DocumentDetailPage() {
   return (
@@ -334,7 +335,7 @@ function DocumentDetailContent() {
             <h2 className="text-sm font-black tracking-tight text-slate-900">Document metadata</h2>
             <div className="mt-4 grid gap-2">
               <MetaRow icon={FileText} label="File name" value={doc.name} />
-              <MetaRow icon={HardDrive} label="File size" value={doc.size || 'Unknown size'} />
+              <MetaRow icon={HardDrive} label="File size" value={formatFileSize(doc.fileSizeBytes)} />
               <MetaRow icon={FileText} label="Subject" value={doc.subject} />
               <MetaRow icon={FileText} label="Chapter" value={doc.chapter || 'All Chapters'} />
               <MetaRow icon={CalendarDays} label="Uploaded" value={doc.uploadedAt} />

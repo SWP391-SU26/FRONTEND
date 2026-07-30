@@ -7,11 +7,14 @@ import {
 import { Link, NavLink } from 'react-router-dom'
 import { isAdminSession } from '../services/authService.js'
 import { cn } from '../utils/cn.js'
+import { LanguageSwitch } from './LanguageSwitch.jsx'
+import { useLocale } from '../i18n/LocaleContext.jsx'
 
 export default function StudentSidebar({
   activeSessionId, busySessionId, collapsed, menuId, onClose, onCollapse, onDelete,
   onLogout, onMenu, onNew, onPin, onRename, onSearch, onSelect, open, search, sessions, user,
 }) {
+  const { t } = useLocale()
   const groups = groupSessions(sessions)
   const sidebar = (
     <aside className={cn(
@@ -21,9 +24,9 @@ export default function StudentSidebar({
       <div className="flex h-16 items-center gap-2 px-3">
         <Link className="flex min-w-0 flex-1 items-center gap-2" to="/workspace">
           <img alt="FStu" className="h-9 w-12 object-contain" src="/Gemini_Generated_Image_gyb1mfgyb1mfgyb1.png" />
-          {!collapsed ? <span className="font-extrabold text-slate-900">FStu Chat</span> : null}
+          {!collapsed ? <span className="font-extrabold text-slate-900">{t('sidebar.brand')}</span> : null}
         </Link>
-        {!collapsed ? <SidebarAction label="Đóng thanh bên" onClick={onCollapse}><PanelLeftClose size={18} /></SidebarAction> : null}
+        {!collapsed ? <SidebarAction label={t('sidebar.close')} onClick={onCollapse}><PanelLeftClose size={18} /></SidebarAction> : null}
       </div>
 
       <div className="px-3">
@@ -35,7 +38,7 @@ export default function StudentSidebar({
           onClick={onNew}
           type="button"
         >
-          <Plus size={18} />{!collapsed ? 'Chat mới' : null}
+          <Plus size={18} />{!collapsed ? t('sidebar.newChat') : null}
         </button>
       </div>
 
@@ -43,10 +46,10 @@ export default function StudentSidebar({
         <label className="mx-3 mt-3 flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-slate-500 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
           <Search size={15} />
           <input
-            aria-label="Tìm cuộc trò chuyện"
+            aria-label={t('sidebar.searchLabel')}
             className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-500"
             onChange={(event) => onSearch(event.target.value)}
-            placeholder="Tìm cuộc trò chuyện"
+            placeholder={t('sidebar.searchPlaceholder')}
             value={search}
           />
         </label>
@@ -55,17 +58,17 @@ export default function StudentSidebar({
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {collapsed ? (
           <div className="flex flex-col items-center gap-2">
-            <SidebarAction label="Mở thanh bên" onClick={onCollapse}><PanelLeftOpen size={19} /></SidebarAction>
+            <SidebarAction label={t('sidebar.open')} onClick={onCollapse}><PanelLeftOpen size={19} /></SidebarAction>
             {sessions.slice(0, 8).map((item) => (
               <button
-                aria-label={item.title}
+                aria-label={item.title || t('sidebar.newConversation')}
                 className={cn(
                   'grid size-10 place-items-center rounded-lg text-slate-500 hover:bg-white hover:text-teal-700',
                   activeSessionId === item.id && 'bg-white text-teal-700 shadow-sm',
                 )}
                 key={item.id}
                 onClick={() => onSelect(item)}
-                title={item.title}
+                title={item.title || t('sidebar.newConversation')}
                 type="button"
               >
                 <MessageSquareText size={17} />
@@ -74,8 +77,8 @@ export default function StudentSidebar({
           </div>
         ) : sessions.length ? (
           groups.map((group) => (
-            <section className="mb-4" key={group.label}>
-              <h2 className="px-2 pb-1.5 text-xs font-semibold text-slate-500">{group.label}</h2>
+            <section className="mb-4" key={group.labelKey}>
+              <h2 className="px-2 pb-1.5 text-xs font-semibold text-slate-500">{t(group.labelKey)}</h2>
               <div className="space-y-0.5">
                 {group.items.map((item) => (
                   <div
@@ -89,16 +92,16 @@ export default function StudentSidebar({
                       <span className="flex items-center gap-1.5">
                         {item.isPinned ? <Pin className="shrink-0 text-teal-700" size={12} /> : null}
                         <span className="block truncate text-sm font-medium text-slate-800">
-                          {item.title || 'Cuộc trò chuyện mới'}
+                          {item.title || t('sidebar.newConversation')}
                         </span>
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-slate-500">
-                        {item.scopeLabel || 'Tài liệu học tập'}
+                        {item.scopeLabel || t('sidebar.learningMaterials')}
                       </span>
                     </button>
                     <SidebarAction
                       className="mr-1 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      label="Tùy chọn cuộc trò chuyện"
+                      label={t('sidebar.options')}
                       onClick={() => onMenu(menuId === item.id ? '' : item.id)}
                     >
                       {busySessionId === item.id
@@ -120,16 +123,19 @@ export default function StudentSidebar({
           ))
         ) : (
           <p className="px-3 py-8 text-center text-sm text-slate-500">
-            {search ? 'Không tìm thấy cuộc trò chuyện.' : 'Chưa có cuộc trò chuyện.'}
+            {search ? t('sidebar.noSearch') : t('sidebar.noSessions')}
           </p>
         )}
       </div>
 
-      <nav className="border-t border-slate-200 p-2" aria-label="Điều hướng người học">
-        <SidebarLink collapsed={collapsed} icon={MessageSquareText} label="AI Chat" to="/workspace" />
-        <SidebarLink collapsed={collapsed} icon={Library} label="Thư viện" to="/library" />
-        <SidebarLink collapsed={collapsed} icon={Settings} label="Cài đặt" to="/settings" />
-        {isAdminSession() ? <SidebarLink collapsed={collapsed} icon={ShieldCheck} label="Quản trị" to="/admin" /> : null}
+      <nav className="border-t border-slate-200 p-2" aria-label={t('common.workspace')}>
+        <SidebarLink collapsed={collapsed} icon={MessageSquareText} label={t('common.aiChat')} to="/workspace" />
+        <SidebarLink collapsed={collapsed} icon={Library} label={t('common.library')} to="/library" />
+        <SidebarLink collapsed={collapsed} icon={Settings} label={t('common.settings')} to="/settings" />
+        {isAdminSession() ? <SidebarLink collapsed={collapsed} icon={ShieldCheck} label={t('common.admin')} to="/admin" /> : null}
+        <div className={cn('my-1', collapsed ? 'flex justify-center' : '')}>
+          <LanguageSwitch compact={collapsed} className={collapsed ? '' : 'w-full justify-start'} />
+        </div>
         <button
           className={cn(
             'mt-1 flex h-11 w-full items-center rounded-lg text-sm text-slate-600 hover:bg-white',
@@ -141,7 +147,7 @@ export default function StudentSidebar({
           <span className="grid size-7 place-items-center rounded-full bg-teal-700 text-[10px] font-bold text-white">
             {getInitials(user?.name)}
           </span>
-          {!collapsed ? <><span className="min-w-0 flex-1 truncate text-left">{user?.name || 'Tài khoản'}</span><LogOut size={15} /></> : null}
+          {!collapsed ? <><span className="min-w-0 flex-1 truncate text-left">{user?.name || t('common.account')}</span><LogOut size={15} /></> : null}
         </button>
       </nav>
     </aside>
@@ -176,11 +182,12 @@ export default function StudentSidebar({
 }
 
 function SessionMenu({ item, onDelete, onPin, onRename }) {
+  const { t } = useLocale()
   return (
     <div className="absolute right-1 top-10 z-20 w-44 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-      <MenuButton icon={Pencil} label="Đổi tên" onClick={onRename} />
-      <MenuButton icon={Pin} label={item.isPinned ? 'Bỏ ghim' : 'Ghim'} onClick={onPin} />
-      <MenuButton danger icon={Trash2} label="Xóa" onClick={onDelete} />
+      <MenuButton icon={Pencil} label={t('sidebar.rename')} onClick={onRename} />
+      <MenuButton icon={Pin} label={item.isPinned ? t('sidebar.unpin') : t('sidebar.pin')} onClick={onPin} />
+      <MenuButton danger icon={Trash2} label={t('common.delete')} onClick={onDelete} />
     </div>
   )
 }
@@ -237,10 +244,10 @@ function groupSessions(sessions) {
   const pinned = sessions.filter((item) => item.isPinned)
   const remaining = sessions.filter((item) => !item.isPinned)
   return [
-    { label: 'Đã ghim', items: pinned },
-    { label: 'Hôm nay', items: remaining.filter((item) => dateValue(item.updatedAt) >= startToday) },
-    { label: '7 ngày qua', items: remaining.filter((item) => dateValue(item.updatedAt) >= weekAgo && dateValue(item.updatedAt) < startToday) },
-    { label: 'Cũ hơn', items: remaining.filter((item) => dateValue(item.updatedAt) < weekAgo) },
+    { labelKey: 'sidebar.pinned', items: pinned },
+    { labelKey: 'sidebar.today', items: remaining.filter((item) => dateValue(item.updatedAt) >= startToday) },
+    { labelKey: 'sidebar.last7Days', items: remaining.filter((item) => dateValue(item.updatedAt) >= weekAgo && dateValue(item.updatedAt) < startToday) },
+    { labelKey: 'sidebar.older', items: remaining.filter((item) => dateValue(item.updatedAt) < weekAgo) },
   ].filter((group) => group.items.length)
 }
 
