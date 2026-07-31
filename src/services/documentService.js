@@ -79,7 +79,14 @@ export async function uploadPersonalDocument({ file, onUploadProgress }) {
   const result = onUploadProgress
     ? await uploadFormData('/documents/personal', formData, onUploadProgress)
     : await request('/documents/personal', { method: 'POST', body: formData })
-  return enrichDocumentChunkCount(toUiDocument(result?.document ?? result))
+  const document = await enrichDocumentChunkCount(toUiDocument(result?.document ?? result))
+  if (
+    document.id
+    && ['Pending', 'Processing', 'Processed', 'Uploaded'].includes(document.status)
+  ) {
+    return waitForDocumentIndexing(document.id)
+  }
+  return document
 }
 
 export async function submitDocument(documentId, courseId) {
@@ -143,6 +150,37 @@ export async function waitForIndexingJob(jobId, { onProgress, timeoutMs = 300000
   throw error
 }
 
+export async function waitForDocumentIndexing(
+  documentId,
+  { onProgress, timeoutMs = 900000, pollIntervalMs = 1500 } = {},
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const document = await getDocument(documentId)
+    onProgress?.(document)
+    if (document.status === 'Indexed') {
+      return enrichDocumentChunkCount(document)
+    }
+    if (document.status === 'Failed' || document.status === 'No text') {
+      const error = new Error(
+        document.indexError
+          || document.errorMessage
+          || (document.status === 'No text'
+            ? 'Document does not contain extractable text.'
+            : 'Document indexing failed.'),
+      )
+      error.code = document.status === 'No text' ? 'DOCUMENT_NO_TEXT' : 'INDEXING_FAILED'
+      throw error
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, pollIntervalMs))
+  }
+  const error = new Error(
+    'The file was uploaded, but semantic indexing is still running. Refresh to check its status.',
+  )
+  error.code = 'INDEXING_TIMEOUT'
+  throw error
+}
+
 export function toUiDocument(document) {
   if (!document) return null
   const chunkCount = toOptionalCount(document.chunkCount)
@@ -193,6 +231,8 @@ export function toUiDocument(document) {
     reviewedBy: document.reviewedBy ?? null,
     reviewedAt: document.reviewedAt ?? null,
     rejectionReason: document.rejectionReason ?? '',
+    indexError: document.indexError ?? '',
+    errorMessage: document.errorMessage ?? '',
     fileSizeBytes: Number(document.fileSizeBytes ?? 0),
     indexingJobId: document.indexingJobId ?? null,
     fileUrl: document.fileUrl ?? document.cloudinarySecureUrl ?? null,

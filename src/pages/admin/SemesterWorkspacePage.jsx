@@ -167,7 +167,12 @@ export default function SemesterWorkspacePage() {
       setDocuments(await getDocuments())
       setNotice(`${file.name} was processed and indexed for ${course.name}.`)
     } catch (e) {
-      setError(`Upload failed: ${e.message}`)
+      if (e.code === 'INDEXING_TIMEOUT') {
+        setNotice(e.message)
+        setDocuments(await getDocuments())
+      } else {
+        setError(`Upload failed: ${e.message}`)
+      }
     } finally {
       setUploadingCourseId('')
     }

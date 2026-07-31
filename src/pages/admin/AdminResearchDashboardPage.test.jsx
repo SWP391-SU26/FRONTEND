@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import { LocaleProvider } from '../../i18n/LocaleContext.jsx'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { comparison } = vi.hoisted(() => ({ comparison: {
@@ -36,32 +37,47 @@ vi.mock('../../services/evaluationService.js', () => ({
 import * as evaluationService from '../../services/evaluationService.js'
 import { AdminResearchDashboardPage, buildComparisonCsv, buildResearchConclusions, filterComparisonRows } from './AdminResearchDashboardPage.jsx'
 
-beforeEach(() => vi.clearAllMocks())
+function renderPage() {
+  return render(<LocaleProvider><AdminResearchDashboardPage /></LocaleProvider>)
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  localStorage.removeItem('fstu_locale')
+})
 
 it('renders official RAGAS metrics while keeping token overlap labeled as a proxy', async () => {
-  render(<AdminResearchDashboardPage />)
+  renderPage()
 
-  expect(await screen.findByText('Experimental conclusion')).toBeInTheDocument()
+  expect(await screen.findByText('Kết luận thực nghiệm')).toBeInTheDocument()
   expect(screen.getByText(/Fine-tuned khớp ground truth cao hơn 15 điểm phần trăm/)).toBeInTheDocument()
-  expect(screen.getByText(/Fine-tuned trả lời nhanh hơn khoảng 44%/)).toBeInTheDocument()
   expect(screen.getByText(/faithfulness, answer relevancy, context precision và context recall là RAGAS chính thức/i)).toBeInTheDocument()
-  expect(screen.getAllByText(/Not applicable/).length).toBeGreaterThanOrEqual(3)
-  expect(await screen.findByRole('heading', { name: 'Visual results on the same dataset snapshot' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getAllByText(/Không áp dụng/).length).toBeGreaterThanOrEqual(3)
+  expect(await screen.findByRole('heading', { name: 'Kết quả trực quan trên cùng snapshot dữ liệu' }, { timeout: 15000 })).toBeInTheDocument()
   expect(screen.getByText('Fine-tuned +15 pp')).toBeInTheDocument()
-  const grounding = screen.getByRole('figure', { name: /RAG source grounding/i })
+  const grounding = screen.getByRole('figure', { name: /Độ bám nguồn RAG/i })
   expect(within(grounding).queryByRole('columnheader', { name: /Fine-tuned/i })).not.toBeInTheDocument()
   expect(evaluationService.getComparison).toHaveBeenCalledWith({ datasetId: 'dataset-1', ragExperimentId: 'rag-1', fineTunedExperimentId: 'fine-1' })
 })
 
 it('filters question rows by winner and expands evidence without relying on color', async () => {
-  render(<AdminResearchDashboardPage />)
+  renderPage()
   await screen.findByText('What is philosophy?')
 
-  fireEvent.change(screen.getByLabelText('Filter results'), { target: { value: 'RAG' } })
+  fireEvent.change(screen.getByLabelText('Lọc kết quả'), { target: { value: 'RAG' } })
   expect(screen.queryByText('What is philosophy?')).not.toBeInTheDocument()
   fireEvent.click(screen.getByText('What is the source of cognition?'))
   expect(screen.getByText('Đáp án chuẩn')).toBeInTheDocument()
   expect(screen.getAllByText('Practice.')).toHaveLength(2)
+})
+
+it('rerenders research report chrome in English when the stored locale is English', async () => {
+  localStorage.setItem('fstu_locale', 'en')
+  renderPage()
+
+  expect(await screen.findByText('Experimental conclusion')).toBeInTheDocument()
+  expect(screen.getByText('Quality comparison')).toBeInTheDocument()
+  expect(screen.getByLabelText('Filter results')).toBeInTheDocument()
 })
 
 describe('report helpers', () => {

@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AssistantMessage } from './WorkspacePage.jsx'
 
@@ -101,5 +101,41 @@ describe('AssistantMessage typewriter', () => {
     expect(screen.getByRole('heading', { name: 'Trả lời' })).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getByRole('table')).toBeInTheDocument()
+  })
+
+  it('restores a persisted processing trace in a collapsed timeline', () => {
+    const labels = {
+      'chat.processTitle': 'Quá trình xử lý',
+      'chat.phaseRetrieval': 'Tìm nội dung liên quan',
+      'chat.evidenceSummary': '8 đoạn bằng chứng trên 5 trang',
+    }
+    render(
+      <AssistantMessage
+        copied={false}
+        message={{
+          id: 'assistant-trace',
+          role: 'assistant',
+          content: 'Câu trả lời đã kiểm chứng.',
+          citations: [],
+          streaming: false,
+          latencyMs: 32000,
+          processingTrace: [{
+            step: 'RETRIEVAL',
+            status: 'COMPLETED',
+            elapsedMs: 4200,
+            metadata: { evidenceCount: 8, pageCount: 5 },
+          }],
+        }}
+        onCitation={vi.fn()}
+        onCopy={vi.fn()}
+        onSave={vi.fn()}
+        t={(key) => labels[key] ?? key}
+      />,
+    )
+
+    expect(screen.queryByText('Tìm nội dung liên quan')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Quá trình xử lý/i }))
+    expect(screen.getByText('Tìm nội dung liên quan')).toBeInTheDocument()
+    expect(screen.getByText('8 đoạn bằng chứng trên 5 trang')).toBeInTheDocument()
   })
 })

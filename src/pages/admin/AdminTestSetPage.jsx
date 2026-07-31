@@ -26,6 +26,8 @@ export function AdminTestSetPage() {
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([])
   const [selectedExperimentId, setSelectedExperimentId] = useState('')
+  const [selectedRagExperimentId, setSelectedRagExperimentId] = useState('')
+  const [selectedFineTunedExperimentId, setSelectedFineTunedExperimentId] = useState('')
   const [datasetName, setDatasetName] = useState('')
   const [lastCreatedSnapshot, setLastCreatedSnapshot] = useState(null)
   const [experimentName, setExperimentName] = useState('')
@@ -61,8 +63,11 @@ export function AdminTestSetPage() {
       setSelectedDocumentIds(processedDocumentIds(documentItems, firstCourseId))
       setSelectedDatasetId(datasetItems[0]?.id ?? '')
       setLoadingReadiness(Boolean(datasetItems[0]?.id))
-      const firstExperiment = experimentItems.find((item) => item.datasetId === datasetItems[0]?.id)
+      const initialRuns = experimentItems.filter((item) => item.datasetId === datasetItems[0]?.id)
+      const firstExperiment = preferredExperiment(initialRuns)
       setSelectedExperimentId(firstExperiment?.id ?? '')
+      setSelectedRagExperimentId(preferredExperiment(initialRuns, 'RAG')?.id ?? '')
+      setSelectedFineTunedExperimentId(preferredExperiment(initialRuns, 'FINE_TUNED')?.id ?? '')
     }).catch((requestError) => active && setError(requestError.message))
       .finally(() => active && setLoading(false))
     return () => { active = false }
@@ -73,6 +78,12 @@ export function AdminTestSetPage() {
   const courseDocuments = useMemo(() => documents.filter((document) => document.courseId === selectedCourseId && isProcessedDocument(document)), [documents, selectedCourseId])
   const datasetExperiments = useMemo(() => experiments.filter((experiment) => experiment.datasetId === selectedDatasetId), [experiments, selectedDatasetId])
   const selectedExperiment = useMemo(() => datasetExperiments.find((experiment) => experiment.id === selectedExperimentId) ?? null, [datasetExperiments, selectedExperimentId])
+  const effectiveRagExperimentId = datasetExperiments.some((item) => item.id === selectedRagExperimentId && item.experimentType === 'RAG')
+    ? selectedRagExperimentId
+    : (preferredExperiment(datasetExperiments, 'RAG')?.id ?? '')
+  const effectiveFineTunedExperimentId = datasetExperiments.some((item) => item.id === selectedFineTunedExperimentId && item.experimentType === 'FINE_TUNED')
+    ? selectedFineTunedExperimentId
+    : (preferredExperiment(datasetExperiments, 'FINE_TUNED')?.id ?? '')
   const snapshotSignature = `${selectedCourseId}|${datasetName.trim()}|${[...selectedDocumentIds].sort().join(',')}`
   const snapshotJustCreated = Boolean(lastCreatedSnapshot && lastCreatedSnapshot.signature === snapshotSignature)
   const readinessType = selectedExperiment?.experimentType ?? experimentType
@@ -95,7 +106,10 @@ export function AdminTestSetPage() {
     return () => { active = false }
   }, [selectedDatasetId, readinessType])
 
-  const runningExperimentIds = useMemo(() => experiments.filter((experiment) => ['QUEUED', 'RUNNING'].includes(experiment.status)).map((experiment) => experiment.id).join('|'), [experiments])
+  const runningExperimentIds = useMemo(() => experiments.filter((experiment) => (
+    ['QUEUED', 'RUNNING'].includes(experiment.status)
+    || (experiment.status === 'COMPLETED' && ['PENDING', 'RUNNING'].includes(experiment.ragasStatus))
+  )).map((experiment) => experiment.id).join('|'), [experiments])
 
   useEffect(() => {
     if (!runningExperimentIds) return undefined
@@ -130,7 +144,13 @@ export function AdminTestSetPage() {
     }
   }, [datasetExperiments, questions.length, selectedDataset])
 
-  const availableStep = !selectedDataset ? 1 : questions.length === 0 ? 2 : datasetExperiments.length === 0 ? 3 : datasetExperiments.some((experiment) => experiment.status !== 'PENDING') ? 5 : 4
+  const availableStep = !selectedDataset
+    ? 1
+    : questions.length === 0
+      ? 2
+      : datasetExperiments.length === 0
+        ? 3
+        : 5
 
   function updateExperiment(updated) {
     setExperiments((current) => current.map((item) => item.id === updated.id ? updated : item))
@@ -139,8 +159,11 @@ export function AdminTestSetPage() {
   function selectDataset(datasetId) {
     setSelectedDatasetId(datasetId)
     setLoadingReadiness(Boolean(datasetId))
-    const nextExperiment = experiments.find((item) => item.datasetId === datasetId)
+    const nextRuns = experiments.filter((item) => item.datasetId === datasetId)
+    const nextExperiment = preferredExperiment(nextRuns)
     setSelectedExperimentId(nextExperiment?.id ?? '')
+    setSelectedRagExperimentId(preferredExperiment(nextRuns, 'RAG')?.id ?? '')
+    setSelectedFineTunedExperimentId(preferredExperiment(nextRuns, 'FINE_TUNED')?.id ?? '')
     if (!datasetId) {
       setQuestions([])
       setReadiness(null)
@@ -292,6 +315,22 @@ export function AdminTestSetPage() {
     })
   }
 
+  async function runExperimentPair() {
+    if (!effectiveRagExperimentId || !effectiveFineTunedExperimentId) return
+    await submit(async () => {
+      const fineReadiness = await evaluationService.getReadiness(selectedDatasetId, 'FINE_TUNED')
+      const running = await evaluationService.runBenchmarkPair({
+        ragExperimentId: effectiveRagExperimentId,
+        fineTunedExperimentId: effectiveFineTunedExperimentId,
+        allowUnverifiedModel: Boolean(fineReadiness.requiresUnverifiedAcknowledgement),
+      })
+      updateExperiment(running.rag)
+      updateExperiment(running.fineTuned)
+      setNotice('Đã xếp hàng chạy song song RAG và Fine-tuned. GPU sẽ xử lý các batch xen kẽ, RAGAS chấm nền sau khi local hoàn tất.')
+      setActiveStep(5)
+    })
+  }
+
   async function cancelExperiment(experiment) {
     await submit(async () => {
       const cancelled = await evaluationService.cancelBenchmark(experiment.id)
@@ -309,7 +348,7 @@ export function AdminTestSetPage() {
     2: <GroundTruthStep importInputRef={questionImportRef} onAddQuestion={addQuestion} onExport={exportQuestions} onGroundTruthChange={setGroundTruth} onImport={importQuestions} onPrevious={() => setActiveStep(1)} onQuestionTextChange={setQuestionText} groundTruth={groundTruth} questionText={questionText} questions={questions} selectedDataset={selectedDataset} submitting={submitting} />,
     3: <BenchmarkConfigurationStep datasetExperiments={datasetExperiments} experimentName={experimentName} experimentType={experimentType} llmModel={llmModel} onExperimentNameChange={setExperimentName} onExperimentTypeChange={(type) => { setExperimentType(type); if (selectedDatasetId) setLoadingReadiness(true) }} onModelChange={setLlmModel} onPrevious={() => setActiveStep(2)} onSelectExperiment={selectExperiment} onSubmit={createExperiment} questions={questions} selectedDataset={selectedDataset} selectedExperimentId={selectedExperimentId} submitting={submitting} />,
     4: <PreflightLaunchStep loadingReadiness={loadingReadiness} onPrevious={() => setActiveStep(3)} onRun={() => runExperiment(selectedExperiment)} onViewRuns={() => setActiveStep(5)} questions={questions} readiness={readiness} selectedDataset={selectedDataset} selectedExperiment={selectedExperiment} submitting={submitting} />,
-    5: <BenchmarkRunsStep datasetExperiments={datasetExperiments} onCancel={cancelExperiment} onCreateAnother={() => setActiveStep(3)} onRerun={runExperiment} questions={questions} selectedExperimentId={selectedExperimentId} submitting={submitting} />,
+    5: <BenchmarkRunsStep datasetExperiments={datasetExperiments} onCancel={cancelExperiment} onCreateAnother={() => setActiveStep(3)} onFineTunedExperimentChange={setSelectedFineTunedExperimentId} onRagExperimentChange={setSelectedRagExperimentId} onRerun={runExperiment} onRunPair={runExperimentPair} questions={questions} selectedExperimentId={selectedExperimentId} selectedFineTunedExperimentId={effectiveFineTunedExperimentId} selectedRagExperimentId={effectiveRagExperimentId} submitting={submitting} />,
   }
 
   return (
@@ -337,4 +376,21 @@ function isProcessedDocument(document) {
 
 function processedDocumentIds(documents, courseId) {
   return documents.filter((document) => document.courseId === courseId && isProcessedDocument(document)).map((document) => document.id)
+}
+
+function preferredExperiment(experiments, type) {
+  const candidates = type
+    ? experiments.filter((experiment) => experiment.experimentType === type)
+    : experiments
+  const priority = (experiment) => {
+    if (['RUNNING', 'QUEUED'].includes(experiment.status)) return 0
+    if (experiment.status === 'COMPLETED' && ['RUNNING', 'PENDING'].includes(experiment.ragasStatus)) return 1
+    if (experiment.status === 'PENDING') return 2
+    return 3
+  }
+  return [...candidates].sort((left, right) => {
+    const statusDifference = priority(left) - priority(right)
+    if (statusDifference) return statusDifference
+    return new Date(right.updatedAt ?? right.createdAt ?? 0) - new Date(left.updatedAt ?? left.createdAt ?? 0)
+  })[0] ?? null
 }

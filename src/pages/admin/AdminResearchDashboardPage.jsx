@@ -6,23 +6,27 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { EmptyState, Panel } from '../../components/ui.jsx'
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
+import { interpolate, useResearchCopy } from '../../i18n/researchCopy.js'
 import * as evaluationService from '../../services/evaluationService.js'
 
 const ResearchDashboardCharts = lazy(() => import('./ResearchDashboardCharts.jsx')
   .then((module) => ({ default: module.ResearchDashboardCharts })))
 
-const METRICS = [
-  { key: 'tokenOverlapProxy', label: 'Token overlap (proxy)', plain: 'Mức trùng khớp từ khóa với đáp án chuẩn.', direction: 'Cao hơn tốt hơn', formula: 'Token F1 nội bộ, không phải metric RAGAS.' },
-  { key: 'answerRelevance', label: 'Answer relevancy', plain: 'Câu trả lời có đi đúng trọng tâm câu hỏi hay không.', direction: 'Cao hơn tốt hơn', formula: 'Metric RAGAS chính thức, chấm bởi OpenAI judge với BGE-M3 evaluator embedding.' },
-  { key: 'faithfulness', label: 'Faithfulness', plain: 'Câu trả lời RAG có được hỗ trợ bởi context truy xuất hay không.', direction: 'Cao hơn tốt hơn', formula: 'Metric RAGAS chính thức.', ragOnly: true },
-  { key: 'contextPrecision', label: 'Context precision', plain: 'Các context RAG lấy về có tập trung vào bằng chứng hữu ích hay không.', direction: 'Cao hơn tốt hơn', formula: 'Metric RAGAS chính thức.', ragOnly: true },
-  { key: 'contextRecall', label: 'Context recall', plain: 'RAG đã lấy đủ bằng chứng cần thiết cho ground truth hay chưa.', direction: 'Cao hơn tốt hơn', formula: 'Metric RAGAS chính thức.', ragOnly: true },
-  { key: 'sourceHitRate', label: 'Source hit rate', plain: 'Citation có trỏ đúng tài liệu mong đợi hay không.', direction: 'Cao hơn tốt hơn', formula: 'Tỷ lệ câu có document ID khớp expected source.', ragOnly: true },
-  { key: 'pageHitRate', label: 'Page hit rate', plain: 'Citation có chứa đúng trang mong đợi hay không.', direction: 'Cao hơn tốt hơn', formula: 'Tỷ lệ câu có expected page nằm trong khoảng trang citation.', ragOnly: true },
-  { key: 'refusalAccuracy', label: 'Refusal accuracy', plain: 'Model có từ chối đúng câu ngoài phạm vi hay không.', direction: 'Cao hơn tốt hơn', formula: 'Tính trên robustness questions được đánh dấu out-of-scope.' },
-]
+function buildMetrics(copy) {
+  return [
+    { key: 'tokenOverlapProxy', label: copy.tokenOverlap, plain: copy.tokenPlain, direction: copy.higherBetter, formula: copy.tokenFormula },
+    { key: 'answerRelevance', label: copy.answerRelevance, plain: copy.answerPlain, direction: copy.higherBetter, formula: copy.answerFormula },
+    { key: 'faithfulness', label: copy.faithfulness, plain: copy.faithPlain, direction: copy.higherBetter, formula: copy.officialFormula, ragOnly: true },
+    { key: 'contextPrecision', label: copy.contextPrecision, plain: copy.precisionPlain, direction: copy.higherBetter, formula: copy.officialFormula, ragOnly: true },
+    { key: 'contextRecall', label: copy.contextRecall, plain: copy.recallPlain, direction: copy.higherBetter, formula: copy.officialFormula, ragOnly: true },
+    { key: 'sourceHitRate', label: copy.sourceHit, plain: copy.sourcePlain, direction: copy.higherBetter, formula: copy.sourceFormula, ragOnly: true },
+    { key: 'pageHitRate', label: copy.pageHit, plain: copy.pagePlain, direction: copy.higherBetter, formula: copy.pageFormula, ragOnly: true },
+    { key: 'refusalAccuracy', label: copy.refusalAccuracy, plain: copy.refusalPlain, direction: copy.higherBetter, formula: copy.refusalFormula },
+  ]
+}
 
 export function AdminResearchDashboardPage() {
+  const copy = useResearchCopy()
   const [datasets, setDatasets] = useState([])
   const [experiments, setExperiments] = useState([])
   const [datasetId, setDatasetId] = useState('')
@@ -66,7 +70,8 @@ export function AdminResearchDashboardPage() {
   }, [datasetId, ragExperimentId, fineExperimentId])
 
   const rows = useMemo(() => filterComparisonRows(comparison?.perQuestion ?? [], query, filter), [comparison, query, filter])
-  const conclusions = useMemo(() => buildResearchConclusions(comparison), [comparison])
+  const conclusions = useMemo(() => buildResearchConclusions(comparison, copy), [comparison, copy])
+  const metrics = useMemo(() => buildMetrics(copy), [copy])
   const rag = comparison?.ragExperiment
   const fine = comparison?.fineTunedExperiment
   const changeDataset = (nextDatasetId) => {
@@ -82,42 +87,43 @@ export function AdminResearchDashboardPage() {
     <div className="research-dashboard">
       <div className="report-screen-only">
         <AdminPageHeader
-          description="Compare quality, source grounding, and response speed across RAG and fine-tuned runs."
+          description={copy.headerDescription}
           icon={BarChart3}
-          title="RBL research report"
+          title={copy.headerTitle}
         />
       </div>
 
       <Panel className="report-controls relative z-20 mt-4 overflow-visible p-3 sm:p-4">
         <div className="grid gap-2.5 lg:grid-cols-3 lg:gap-3">
-          <ResearchSelect label="Dataset" options={datasets} placeholder="Select a dataset" value={datasetId} onChange={changeDataset} optionLabel={(dataset) => dataset.name} optionMeta={(dataset) => formatStatus(dataset.status)} emptyLabel="No datasets available" />
-          <ResearchSelect label="RAG run" options={ragRuns} placeholder="Select a RAG run" value={ragExperimentId} onChange={(nextId) => { setComparison(null); setLoading(Boolean(nextId && fineExperimentId)); setError(''); setRagExperimentId(nextId) }} optionLabel={(run) => run.name} optionMeta={(run) => formatStatus(run.status)} emptyLabel="No RAG runs available" />
-          <ResearchSelect label="Fine-tuned run" options={fineRuns} placeholder="Select a fine-tuned run" value={fineExperimentId} onChange={(nextId) => { setComparison(null); setLoading(Boolean(nextId && ragExperimentId)); setError(''); setFineExperimentId(nextId) }} optionLabel={(run) => run.name} optionMeta={(run) => formatStatus(run.status)} emptyLabel="No fine-tuned runs available" />
+          <ResearchSelect label={copy.dataset} options={datasets} placeholder={copy.selectDataset} value={datasetId} onChange={changeDataset} optionLabel={(dataset) => dataset.name} optionMeta={(dataset) => formatStatus(dataset.status)} emptyLabel={copy.noDatasets} />
+          <ResearchSelect label={copy.ragRun} options={ragRuns} placeholder={copy.selectRag} value={ragExperimentId} onChange={(nextId) => { setComparison(null); setLoading(Boolean(nextId && fineExperimentId)); setError(''); setRagExperimentId(nextId) }} optionLabel={(run) => run.name} optionMeta={(run) => formatStatus(run.status)} emptyLabel={copy.noRag} />
+          <ResearchSelect label={copy.fineRun} options={fineRuns} placeholder={copy.selectFine} value={fineExperimentId} onChange={(nextId) => { setComparison(null); setLoading(Boolean(nextId && ragExperimentId)); setError(''); setFineExperimentId(nextId) }} optionLabel={(run) => run.name} optionMeta={(run) => formatStatus(run.status)} emptyLabel={copy.noFine} />
         </div>
       </Panel>
 
       {error ? <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div> : null}
-      {loading ? <Panel className="mt-4 flex min-h-40 items-center justify-center gap-2 p-5 text-sm font-semibold text-slate-600"><span className="size-4 animate-spin rounded-full border-2 border-primary border-r-transparent" />Preparing report…</Panel> : comparison ? (
-        <article className="research-report mt-4 space-y-6" aria-label="RAG and fine-tuned experiment report">
-          <ReportTitle comparison={comparison} onCsv={() => downloadComparisonCsv(comparison)} onPrint={() => window.print()} />
-          <Suspense fallback={<div className="grid min-h-72 place-items-center rounded-2xl border border-slate-200 bg-white/70 text-sm font-semibold text-slate-500">Preparing charts…</div>}><ResearchDashboardCharts comparison={comparison} /></Suspense>
-          <ExecutiveSummary conclusions={conclusions} comparison={comparison} />
+      {loading ? <Panel className="mt-4 flex min-h-40 items-center justify-center gap-2 p-5 text-sm font-semibold text-slate-600"><span className="size-4 animate-spin rounded-full border-2 border-primary border-r-transparent" />{copy.preparingReport}</Panel> : comparison ? (
+        <article className="research-report mt-4 space-y-6" aria-label={copy.reportAria}>
+          {!comparison.methodology?.officialRagas ? <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900">{copy.localPending}</div> : null}
+          <ReportTitle copy={copy} comparison={comparison} onCsv={() => downloadComparisonCsv(comparison)} onPrint={() => window.print()} />
+          <Suspense fallback={<div className="grid min-h-72 place-items-center rounded-2xl border border-slate-200 bg-white/70 text-sm font-semibold text-slate-500">{copy.preparingCharts}</div>}><ResearchDashboardCharts comparison={comparison} /></Suspense>
+          <ExecutiveSummary copy={copy} conclusions={conclusions} comparison={comparison} />
 
           <section aria-labelledby="benchmark-heading">
-            <SectionHeading eyebrow="02 · Bảng số liệu" icon={FlaskConical} id="benchmark-heading" title="Official RAGAS benchmark" />
+            <SectionHeading eyebrow={copy.table} icon={FlaskConical} id="benchmark-heading" title={comparison.methodology?.officialRagas ? copy.officialRagas : copy.localBenchmark} />
             <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white/80">
               <table className="benchmark-table w-full min-w-[760px] text-left text-sm">
-                <thead><tr><th>Metric</th><th>RAG</th><th>Fine-tuned</th><th>Interpretation</th></tr></thead>
-                <tbody>{METRICS.map((metric) => <MetricRow key={metric.key} metric={metric} rag={rag} fine={fine} />)}<LatencyMetricRow rag={rag} fine={fine} /><SuccessMetricRow rag={rag} fine={fine} /></tbody>
+                <thead><tr><th>{copy.metric}</th><th>RAG</th><th>Fine-tuned</th><th>{copy.interpretation}</th></tr></thead>
+                <tbody>{metrics.map((metric) => <MetricRow copy={copy} key={metric.key} metric={metric} rag={rag} fine={fine} />)}<LatencyMetricRow copy={copy} rag={rag} fine={fine} /><SuccessMetricRow copy={copy} rag={rag} fine={fine} /></tbody>
               </table>
             </div>
-            <div className="mt-3 flex items-start gap-2 rounded-xl bg-teal-50 p-3 text-sm leading-6 text-teal-900"><Info className="mt-0.5 shrink-0" size={17} /><p><strong>Phương pháp:</strong> faithfulness, answer relevancy, context precision và context recall là RAGAS chính thức. Token overlap được hiển thị riêng với nhãn proxy.</p></div>
+            <div className="mt-3 flex items-start gap-2 rounded-xl bg-teal-50 p-3 text-sm leading-6 text-teal-900"><Info className="mt-0.5 shrink-0" size={17} /><p><strong>{copy.methodologyNote}</strong> {copy.methodologyText}</p></div>
           </section>
 
-          <QuestionAnalysis rows={rows} allRows={comparison.perQuestion ?? []} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} expanded={expanded} setExpanded={setExpanded} />
-          <Methodology comparison={comparison} />
+          <QuestionAnalysis copy={copy} rows={rows} allRows={comparison.perQuestion ?? []} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} expanded={expanded} setExpanded={setExpanded} />
+          <Methodology copy={copy} comparison={comparison} />
         </article>
-      ) : <div className="mt-4"><EmptyState title="Select two compatible runs" description="Choose one RAG run and one fine-tuned run that share a dataset checksum and benchmark profile." /></div>}
+      ) : <div className="mt-4"><EmptyState title={copy.selectDataset} description={copy.localPending} /></div>}
     </div>
   )
 }
@@ -249,66 +255,67 @@ function ResearchSelect({ emptyLabel, label, onChange, optionLabel, optionMeta, 
   )
 }
 
-function ReportTitle({ comparison, onCsv, onPrint }) {
+function ReportTitle({ comparison, copy, onCsv, onPrint }) {
   const dataset = comparison.dataset ?? {}
   return <header className="os-panel overflow-hidden p-6 sm:p-8">
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
-      <div><p className="text-xs font-black uppercase tracking-[.16em] text-primary">Research output · RBL</p><h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">RAG vs fine-tuned comparison</h1><p className="mt-3 max-w-3xl leading-7 text-slate-600">Evaluated on <strong>{dataset.name ?? 'the selected dataset'}</strong> using the same data snapshot for a fair comparison.</p></div>
-      <div className="report-actions flex shrink-0 gap-2"><button className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-primary" onClick={onCsv} type="button"><Download size={17} />Export CSV</button><button className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:opacity-90" onClick={onPrint} type="button"><FileDown size={17} />Print / save as PDF</button></div>
+      <div><p className="text-xs font-black uppercase tracking-[.16em] text-primary">{copy.output}</p><h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">{copy.comparison}</h1><p className="mt-3 max-w-3xl leading-7 text-slate-600">{interpolate(copy.evaluated, { dataset: dataset.name ?? copy.dataset })}</p></div>
+      <div className="report-actions flex shrink-0 gap-2"><button className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-primary" onClick={onCsv} type="button"><Download size={17} />{copy.exportCsv}</button><button className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:opacity-90" onClick={onPrint} type="button"><FileDown size={17} />{copy.print}</button></div>
     </div>
-    <dl className="mt-6 grid gap-4 border-t border-slate-200 pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4"><Meta label="Số câu hỏi" value={dataset.questionCount ?? comparison.perQuestion?.length ?? 0} /><Meta label="Số tài liệu" value={dataset.documentCount ?? '—'} /><Meta label="Chuẩn metric" value={comparison.metricStandard ?? 'RAGAS_OFFICIAL'} /><Meta label="Formula version" value={comparison.formulaVersion ?? 'ragas-0.4'} /></dl>
+    <dl className="mt-6 grid gap-4 border-t border-slate-200 pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4"><Meta label={copy.questions} value={dataset.questionCount ?? comparison.perQuestion?.length ?? 0} /><Meta label={copy.documents} value={dataset.documentCount ?? '—'} /><Meta label={copy.metricStandard} value={comparison.metricStandard ?? 'RAGAS_OFFICIAL'} /><Meta label={copy.formulaVersion} value={comparison.formulaVersion ?? 'ragas-0.4'} /></dl>
     <p className="mt-4 break-all font-mono text-[11px] text-slate-500">Checksum: {comparison.datasetChecksum}</p>
   </header>
 }
 
-function ExecutiveSummary({ conclusions, comparison }) {
+function ExecutiveSummary({ conclusions, comparison, copy }) {
   const hasFailure = (comparison.ragExperiment?.failureCount ?? 0) + (comparison.fineTunedExperiment?.failureCount ?? 0) > 0
   return <section className="rounded-2xl border border-teal-200 bg-teal-50/70 p-6 sm:p-8" aria-labelledby="conclusion-heading">
-    <div className="flex items-start gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary text-white"><CheckCircle2 size={21} /></div><div><p className="text-xs font-black uppercase tracking-[.14em] text-primary">Experimental conclusion</p><h2 className="mt-1 text-2xl font-black text-slate-950" id="conclusion-heading">Key findings without collapsing them into one arbitrary score</h2></div></div>
+    <div className="flex items-start gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary text-white"><CheckCircle2 size={21} /></div><div><p className="text-xs font-black uppercase tracking-[.14em] text-primary">{copy.conclusion}</p><h2 className="mt-1 text-2xl font-black text-slate-950" id="conclusion-heading">{copy.keyFindings}</h2></div></div>
     <ul className="mt-5 grid gap-3 text-[15px] leading-7 text-slate-700 lg:grid-cols-2">{conclusions.map((item) => <li className="flex gap-3" key={item}><span className="mt-2.5 size-1.5 shrink-0 rounded-full bg-primary" />{item}</li>)}</ul>
-    {hasFailure ? <div className="mt-5 flex gap-2 rounded-xl border border-amber-200 bg-white/70 p-3 text-sm text-amber-900"><AlertTriangle className="shrink-0" size={18} />This report has partial results. Failed questions remain visible in the performance summary and detail table.</div> : null}
+    {hasFailure ? <div className="mt-5 flex gap-2 rounded-xl border border-amber-200 bg-white/70 p-3 text-sm text-amber-900"><AlertTriangle className="shrink-0" size={18} />{copy.partial}</div> : null}
   </section>
 }
 
 function SectionHeading({ eyebrow, icon: Icon, id, title }) { return <div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-teal-50 text-primary"><Icon size={19} /></div><div><p className="text-xs font-bold uppercase tracking-[.13em] text-slate-500">{eyebrow}</p><h2 className="text-xl font-black text-slate-950" id={id}>{title}</h2></div></div> }
 
-function MetricRow({ metric, rag, fine }) { return <tr><th scope="row"><span className="block font-bold text-slate-900">{metric.label}</span><span className="mt-1 block text-xs font-normal text-slate-500">{metric.direction}</span></th><td className="metric-number">{formatPercent(rag?.[metric.key])}</td><td className="metric-number">{metric.ragOnly ? <NotApplicable /> : formatPercent(fine?.[metric.key])}</td><td><p className="leading-6 text-slate-600">{metric.plain}</p><details className="mt-2"><summary className="cursor-pointer text-xs font-bold text-primary">View calculation</summary><p className="mt-2 text-xs leading-5 text-slate-500">{metric.formula}</p></details></td></tr> }
-function LatencyMetricRow({ rag, fine }) { return <tr><th scope="row"><span className="block font-bold">Response time</span><span className="mt-1 block text-xs font-normal text-slate-500">Lower is better</span></th><td className="metric-number">{formatLatency(rag?.latencyMs)}</td><td className="metric-number">{formatLatency(fine?.latencyMs)}</td><td className="leading-6 text-slate-600">Average effective time to process one question.</td></tr> }
-function SuccessMetricRow({ rag, fine }) { return <tr><th scope="row"><span className="block font-bold">Successful-run rate</span><span className="mt-1 block text-xs font-normal text-slate-500">Higher is better</span></th><td className="metric-number">{formatPercent(successRate(rag))}</td><td className="metric-number">{formatPercent(successRate(fine))}</td><td className="leading-6 text-slate-600">Share of questions with a valid result; failed model runs remain visible.</td></tr> }
-function NotApplicable() { return <span className="inline-block max-w-40 text-sm font-semibold leading-5 text-slate-500">Not applicable<span className="block text-xs font-normal">No retrieval context</span></span> }
+function MetricRow({ copy, metric, rag, fine }) { return <tr><th scope="row"><span className="block font-bold text-slate-900">{metric.label}</span><span className="mt-1 block text-xs font-normal text-slate-500">{metric.direction}</span></th><td className="metric-number">{formatPercent(rag?.[metric.key])}</td><td className="metric-number">{metric.ragOnly ? <NotApplicable copy={copy} /> : formatPercent(fine?.[metric.key])}</td><td><p className="leading-6 text-slate-600">{metric.plain}</p><details className="mt-2"><summary className="cursor-pointer text-xs font-bold text-primary">{copy.viewCalculation}</summary><p className="mt-2 text-xs leading-5 text-slate-500">{metric.formula}</p></details></td></tr> }
+function LatencyMetricRow({ copy, rag, fine }) { return <tr><th scope="row"><span className="block font-bold">{copy.responseTime}</span><span className="mt-1 block text-xs font-normal text-slate-500">{copy.lowerBetter}</span></th><td className="metric-number">{formatLatency(rag?.latencyMs)}</td><td className="metric-number">{formatLatency(fine?.latencyMs)}</td><td className="leading-6 text-slate-600">{copy.latencyPlain}</td></tr> }
+function SuccessMetricRow({ copy, rag, fine }) { return <tr><th scope="row"><span className="block font-bold">{copy.successfulRate}</span><span className="mt-1 block text-xs font-normal text-slate-500">{copy.higherBetter}</span></th><td className="metric-number">{formatPercent(successRate(rag))}</td><td className="metric-number">{formatPercent(successRate(fine))}</td><td className="leading-6 text-slate-600">{copy.successPlain}</td></tr> }
+function NotApplicable({ copy }) { return <span className="inline-block max-w-40 text-sm font-semibold leading-5 text-slate-500">{copy.notApplicable}<span className="block text-xs font-normal">{copy.noRetrieval}</span></span> }
 
-function QuestionAnalysis({ rows, allRows, query, setQuery, filter, setFilter, expanded, setExpanded }) {
+function QuestionAnalysis({ copy, rows, allRows, query, setQuery, filter, setFilter, expanded, setExpanded }) {
   const toggle = (id) => setExpanded((current) => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next })
   return <section aria-labelledby="questions-heading">
-    <SectionHeading eyebrow="03 · Sample analysis" icon={Search} id="questions-heading" title={`Details for ${allRows.length} questions`} />
+    <SectionHeading eyebrow={copy.details} icon={Search} id="questions-heading" title={interpolate(copy.detailsTitle, { count: allRows.length })} />
     <div className="report-question-controls mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/70 p-4 md:flex-row">
-      <label className="relative flex-1"><span className="sr-only">Search questions</span><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-primary" onChange={(event) => setQuery(event.target.value)} placeholder="Search question content…" value={query} /></label>
-      <select aria-label="Filter results" className="min-h-11 rounded-xl border border-border bg-white/90 px-3 text-sm font-semibold text-slate-600 shadow-[0_10px_24px_rgba(15,118,110,.06)] outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100 md:max-w-64" onChange={(event) => setFilter(event.target.value)} value={filter}><option value="ALL">All results</option><option value="RAG">RAG performs better</option><option value="FINE">Fine-tuned performs better</option><option value="TIE">Near equivalent</option><option value="ERROR">Has errors</option></select>
+      <label className="relative flex-1"><span className="sr-only">{copy.search}</span><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><input className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-primary" onChange={(event) => setQuery(event.target.value)} placeholder={copy.search} value={query} /></label>
+      <select aria-label={copy.filter} className="min-h-11 rounded-xl border border-border bg-white/90 px-3 text-sm font-semibold text-slate-600 shadow-[0_10px_24px_rgba(15,118,110,.06)] outline-none transition focus:border-teal-400 focus:ring-4 focus:ring-teal-100 md:max-w-64" onChange={(event) => setFilter(event.target.value)} value={filter}><option value="ALL">{copy.all}</option><option value="RAG">{copy.ragBetter}</option><option value="FINE">{copy.fineBetter}</option><option value="TIE">{copy.nearEquivalent}</option><option value="ERROR">{copy.hasErrors}</option></select>
     </div>
     <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white/80">
       {rows.length ? rows.map((row, index) => { const open = expanded.has(row.questionId); const outcome = classifyRow(row); return <div className="question-row border-b border-slate-200 last:border-0" key={row.questionId}>
-        <button aria-expanded={open} className="flex w-full items-start gap-4 p-4 text-left hover:bg-teal-50/40 sm:p-5" onClick={() => toggle(row.questionId)} type="button"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span><span className="min-w-0 flex-1"><span className="font-bold leading-6 text-slate-900">{row.question}</span><span className="mt-1 flex flex-wrap items-center gap-2 text-xs"><OutcomeBadge outcome={outcome} /><span className="tabular-nums text-slate-500">Δ proxy {formatDelta(row.tokenOverlapProxyDelta)} điểm %</span>{row.ragError || row.fineTunedError ? <span className="font-semibold text-red-700">Có lỗi</span> : null}</span></span><ChevronDown className={`mt-1 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} size={18} /></button>
-        {open ? <QuestionDetail row={row} /> : null}
-      </div> }) : <p className="p-8 text-center text-sm text-slate-500">No questions match this filter.</p>}
+        <button aria-expanded={open} className="flex w-full items-start gap-4 p-4 text-left hover:bg-teal-50/40 sm:p-5" onClick={() => toggle(row.questionId)} type="button"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-black text-slate-600">{index + 1}</span><span className="min-w-0 flex-1"><span className="font-bold leading-6 text-slate-900">{row.question}</span><span className="mt-1 flex flex-wrap items-center gap-2 text-xs"><OutcomeBadge copy={copy} outcome={outcome} /><span className="tabular-nums text-slate-500">{interpolate(copy.proxyDelta, { value: formatDelta(row.tokenOverlapProxyDelta) })}</span>{row.ragError || row.fineTunedError ? <span className="font-semibold text-red-700">{copy.error}</span> : null}</span></span><ChevronDown className={`mt-1 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} size={18} /></button>
+        {open ? <QuestionDetail copy={copy} row={row} /> : null}
+      </div> }) : <p className="p-8 text-center text-sm text-slate-500">{copy.noRows}</p>}
     </div>
   </section>
 }
 
-function QuestionDetail({ row }) { return <div className="question-detail border-t border-slate-100 bg-slate-50/70 p-5 sm:p-6"><div className="grid gap-5 lg:grid-cols-3"><AnswerBlock label="Đáp án chuẩn" text={row.groundTruth} /><AnswerBlock label={`RAG · proxy ${formatPercent(row.ragTokenOverlapProxy)}`} text={row.ragAnswer} error={row.ragError} /><AnswerBlock label={`Fine-tuned · proxy ${formatPercent(row.fineTunedTokenOverlapProxy)}`} text={row.fineTunedAnswer} error={row.fineTunedError} /></div><div className="mt-5 grid gap-4 md:grid-cols-2"><div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Nguồn RAG</p><CitationList citations={row.ragCitations} /></div><div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">Thời gian</p><p className="mt-2 text-sm text-slate-600">RAG: <strong>{formatLatency(row.ragEffectiveLatencyMs ?? row.ragLatencyMs)}</strong> · Fine-tuned: <strong>{formatLatency(row.fineTunedEffectiveLatencyMs ?? row.fineTunedLatencyMs)}</strong></p></div></div></div> }
-function AnswerBlock({ error, label, text }) { return <div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{label}</p><p className={`mt-2 text-sm leading-6 ${error ? 'text-red-700' : 'text-slate-700'}`}>{error || text || 'Không có dữ liệu.'}</p></div> }
-function CitationList({ citations }) { const list = Array.isArray(citations) ? citations : []; return list.length ? <ul className="mt-2 space-y-1 text-sm text-slate-600">{list.map((citation, index) => <li key={`${index}-${JSON.stringify(citation)}`}>{citationLabel(citation, index)}</li>)}</ul> : <p className="mt-2 text-sm text-slate-500">Không ghi nhận citation.</p> }
-function OutcomeBadge({ outcome }) { const labels = { RAG: 'RAG tốt hơn', FINE: 'Fine-tuned tốt hơn', TIE: 'Gần tương đương', ERROR: 'Có lỗi' }; return <span className="rounded-full bg-teal-50 px-2 py-1 font-bold text-primary">{labels[outcome]}</span> }
+function QuestionDetail({ copy, row }) { return <div className="question-detail border-t border-slate-100 bg-slate-50/70 p-5 sm:p-6"><div className="grid gap-5 lg:grid-cols-3"><AnswerBlock copy={copy} label={copy.groundTruth} text={row.groundTruth} /><AnswerBlock copy={copy} label={`RAG · proxy ${formatPercent(row.ragTokenOverlapProxy)}`} text={row.ragAnswer} error={row.ragError} /><AnswerBlock copy={copy} label={`Fine-tuned · proxy ${formatPercent(row.fineTunedTokenOverlapProxy)}`} text={row.fineTunedAnswer} error={row.fineTunedError} /></div><div className="mt-5 grid gap-4 md:grid-cols-2"><div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{copy.ragSources}</p><CitationList copy={copy} citations={row.ragCitations} /></div><div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{copy.time}</p><p className="mt-2 text-sm text-slate-600">RAG: <strong>{formatLatency(row.ragEffectiveLatencyMs ?? row.ragLatencyMs)}</strong> · Fine-tuned: <strong>{formatLatency(row.fineTunedEffectiveLatencyMs ?? row.fineTunedLatencyMs)}</strong></p></div></div></div> }
+function AnswerBlock({ copy, error, label, text }) { return <div><p className="text-xs font-black uppercase tracking-[.1em] text-slate-500">{label}</p><p className={`mt-2 text-sm leading-6 ${error ? 'text-red-700' : 'text-slate-700'}`}>{error || text || copy.noData}</p></div> }
+function CitationList({ copy, citations }) { const list = Array.isArray(citations) ? citations : []; return list.length ? <ul className="mt-2 space-y-1 text-sm text-slate-600">{list.map((citation, index) => <li key={`${index}-${JSON.stringify(citation)}`}>{citationLabel(citation, index)}</li>)}</ul> : <p className="mt-2 text-sm text-slate-500">{copy.noCitation}</p> }
+function OutcomeBadge({ copy, outcome }) { const labels = { RAG: copy.ragBetter, FINE: copy.fineBetter, TIE: copy.nearEquivalent, ERROR: copy.hasErrors }; return <span className="rounded-full bg-teal-50 px-2 py-1 font-bold text-primary">{labels[outcome]}</span> }
 
-function Methodology({ comparison }) { const profile = comparison.benchmarkProfile ?? {}; return <section className="report-methodology rounded-2xl border border-slate-200 bg-white/70 p-6 sm:p-8" aria-labelledby="method-heading"><SectionHeading eyebrow="04 · Minh bạch nghiên cứu" icon={Info} id="method-heading" title="Phương pháp và giới hạn" /><div className="mt-5 grid gap-6 md:grid-cols-2"><div><h3 className="font-black">Thiết lập benchmark</h3><dl className="mt-3 space-y-2 text-sm text-slate-600"><MetaLine label="Profile" value={profile.version ?? profile.profileVersion ?? 'Full benchmark'} /><MetaLine label="Batch size" value={profile.batchSize ?? '—'} /><MetaLine label="Input tối đa" value={profile.maxInputTokens ? `${profile.maxInputTokens} tokens` : '—'} /><MetaLine label="Output tối đa" value={profile.maxNewTokens ? `${profile.maxNewTokens} tokens` : '—'} /></dl></div><div><h3 className="font-black">Giới hạn cần đọc trước khi kết luận</h3><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600"><li>Dataset chỉ gồm {comparison.dataset?.questionCount ?? comparison.perQuestion?.length ?? 0} câu và không đại diện cho mọi tình huống.</li><li>Ground truth do người xây dựng dataset cung cấp.</li><li>OpenAI là judge RAGAS; BGE-M3 là evaluator embedding. Token overlap được ghi riêng là proxy.</li><li>Fine-tuned không truy xuất context nên không có citation, context precision/recall và faithfulness theo nguồn.</li></ul></div></div></section> }
+function Methodology({ comparison, copy }) { const profile = comparison.benchmarkProfile ?? {}; const count = comparison.dataset?.questionCount ?? comparison.perQuestion?.length ?? 0; return <section className="report-methodology rounded-2xl border border-slate-200 bg-white/70 p-6 sm:p-8" aria-labelledby="method-heading"><SectionHeading eyebrow={copy.methods} icon={Info} id="method-heading" title={copy.methodsTitle} /><div className="mt-5 grid gap-6 md:grid-cols-2"><div><h3 className="font-black">{copy.setup}</h3><dl className="mt-3 space-y-2 text-sm text-slate-600"><MetaLine label={copy.profile} value={profile.version ?? profile.profileVersion ?? copy.fullBenchmark} /><MetaLine label={copy.batchSize} value={profile.batchSize ?? '—'} /><MetaLine label={copy.maxInput} value={profile.maxInputTokens ? `${profile.maxInputTokens} tokens` : '—'} /><MetaLine label={copy.maxOutput} value={profile.maxNewTokens ? `${profile.maxNewTokens} tokens` : '—'} /></dl></div><div><h3 className="font-black">{copy.limitations}</h3><ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600"><li>{interpolate(copy.limitDataset, { count })}</li><li>{copy.limitTruth}</li><li>{copy.limitJudge}</li><li>{copy.limitFine}</li></ul></div></div></section> }
 
-export function buildResearchConclusions(comparison) {
+export function buildResearchConclusions(comparison, copy) {
   if (!comparison) return []
+  const text = copy ?? vietnameseResearchCopy()
   const rag = comparison.ragExperiment ?? {}; const fine = comparison.fineTunedExperiment ?? {}
   const qualityDelta = (fine.tokenOverlapProxy ?? 0) - (rag.tokenOverlapProxy ?? 0)
-  const quality = Math.abs(qualityDelta) < 0.02 ? 'Hai model có độ chính xác gần tương đương (chênh lệch dưới 2 điểm phần trăm).' : `${qualityDelta > 0 ? 'Fine-tuned' : 'RAG'} khớp ground truth cao hơn ${Math.round(Math.abs(qualityDelta) * 100)} điểm phần trăm.`
-  const speed = speedSentence(rag.latencyMs, fine.latencyMs)
-  const grounding = `For RAG, context precision is ${formatPercent(rag.contextPrecision)} and context recall is ${formatPercent(rag.contextRecall)}. These figures indicate how accurately the system chose sources and whether it retrieved enough information.`
-  const useCase = 'RAG fits work that requires source traceability; fine-tuning fits direct responses. This report does not claim that either model is universally best.'
+  const quality = Math.abs(qualityDelta) < 0.02 ? text.qualityTie : interpolate(text.qualityDelta, { model: qualityDelta > 0 ? 'Fine-tuned' : 'RAG', points: Math.round(Math.abs(qualityDelta) * 100) })
+  const speed = speedSentence(rag.latencyMs, fine.latencyMs, text)
+  const grounding = interpolate(text.groundingConclusion, { precision: formatPercent(rag.contextPrecision), recall: formatPercent(rag.contextRecall) })
+  const useCase = text.useCase
   return [quality, speed, grounding, useCase]
 }
 
@@ -323,7 +330,8 @@ function downloadComparisonCsv(comparison) { const blob = new Blob([buildCompari
 function terminalRuns(experiments, datasetId) { return experiments.filter((run) => run.datasetId === datasetId && ['COMPLETED', 'FAILED'].includes(run.status) && run.datasetChecksum) }
 function selectDataset(id, experiments, setters) { const runs = terminalRuns(experiments, id); setters.setDatasetId(id); setters.setRagExperimentId(runs.find((run) => run.experimentType === 'RAG')?.id ?? ''); setters.setFineExperimentId(runs.find((run) => run.experimentType === 'FINE_TUNED')?.id ?? '') }
 function classifyRow(row) { if (row.ragError || row.fineTunedError) return 'ERROR'; const delta = row.tokenOverlapProxyDelta; if (delta == null || Math.abs(delta) < 0.02) return 'TIE'; return delta > 0 ? 'FINE' : 'RAG' }
-function speedSentence(rag, fine) { if (!rag || !fine) return 'Chưa đủ dữ liệu latency để kết luận về tốc độ.'; const faster = rag < fine ? 'RAG' : 'Fine-tuned'; const slower = Math.max(rag, fine); const fasterValue = Math.min(rag, fine); return `${faster} trả lời nhanh hơn khoảng ${Math.round((1 - fasterValue / slower) * 100)}% theo latency trung bình.` }
+function speedSentence(rag, fine, copy) { if (!rag || !fine) return copy.insufficientData; const faster = rag < fine ? 'RAG' : 'Fine-tuned'; const slower = Math.max(rag, fine); const fasterValue = Math.min(rag, fine); return interpolate(copy.faster, { model: faster, percent: Math.round((1 - fasterValue / slower) * 100) }) }
+function vietnameseResearchCopy() { return { qualityTie: 'Hai model có độ chính xác gần tương đương (chênh lệch dưới 2 điểm phần trăm).', qualityDelta: '{model} khớp ground truth cao hơn {points} điểm phần trăm.', insufficientData: 'Chưa đủ dữ liệu', faster: '{model} nhanh hơn khoảng {percent}%', groundingConclusion: 'Với RAG, context precision là {precision} và context recall là {recall}. Các chỉ số này phản ánh mức độ chọn đúng nguồn và truy xuất đủ bằng chứng.', useCase: 'RAG phù hợp khi cần truy vết nguồn; Fine-tuned phù hợp cho câu trả lời trực tiếp. Báo cáo này không kết luận model nào luôn tốt hơn.' } }
 function successRate(run) { const total = totalRunCount(run); return run?.successRate ?? (total ? (run?.successCount ?? 0) / total : null) }
 function totalRunCount(run) { return run?.totalCount ?? ((run?.successCount ?? 0) + (run?.failureCount ?? 0)) }
 function formatPercent(value) { return value == null ? '—' : `${Math.round(value * 100)}%` }

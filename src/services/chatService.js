@@ -158,8 +158,23 @@ function toUiMessage(message) {
     content: message.messageContent ?? message.content ?? '',
     generationMode: message.generationMode ?? message.llmModel ?? null,
     latencyMs: message.latencyMs ?? null,
+    answerDepth: message.answerDepth ?? null,
+    questionIntent: message.questionIntent ?? null,
+    processingTrace: Array.isArray(message.processingTrace)
+      ? message.processingTrace
+      : parseProcessingTrace(message.processingTraceJson),
     citations: (message.citations ?? []).map(toUiCitation),
     createdAt: message.createdAt,
+  }
+}
+
+function parseProcessingTrace(value) {
+  if (!value || typeof value !== 'string') return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
 }
 

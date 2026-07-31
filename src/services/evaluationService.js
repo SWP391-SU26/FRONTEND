@@ -82,6 +82,21 @@ export async function runBenchmark(experimentId, { allowUnverifiedModel = false 
   }))
 }
 
+export async function runBenchmarkPair({
+  ragExperimentId,
+  fineTunedExperimentId,
+  allowUnverifiedModel = false,
+}) {
+  const response = await request('/evaluation/experiments/run-pair', {
+    method: 'POST',
+    body: JSON.stringify({ ragExperimentId, fineTunedExperimentId, allowUnverifiedModel }),
+  })
+  return {
+    rag: toUiExperiment(response?.rag),
+    fineTuned: toUiExperiment(response?.fineTuned),
+  }
+}
+
 export async function cancelBenchmark(experimentId) {
   return toUiExperiment(await request(`/evaluation/experiments/${experimentId}/cancel`, { method: 'POST' }))
 }
@@ -91,7 +106,11 @@ export async function waitForExperiment(experimentId, { onProgress, timeoutMs = 
   while (Date.now() < deadline) {
     const experiment = await getExperiment(experimentId)
     onProgress?.(experiment)
-    if (['COMPLETED', 'CANCELLED'].includes(experiment.status)) return experiment
+    if (experiment.status === 'CANCELLED') return experiment
+    if (experiment.status === 'COMPLETED'
+      && (!experiment.ragasStatus || ['COMPLETED', 'FAILED'].includes(experiment.ragasStatus))) {
+      return experiment
+    }
     if (experiment.status === 'FAILED') {
       const error = new Error(experiment.errorMessage || 'Benchmark failed.')
       error.code = 'BENCHMARK_FAILED'
@@ -209,6 +228,15 @@ function toUiExperiment(experiment) {
     createdAt: experiment.createdAt,
     updatedAt: experiment.updatedAt,
     errorMessage: experiment.errorMessage ?? null,
+    ragasStatus: experiment.ragasStatus ?? null,
+    ragasProgress: Number(experiment.ragasProgress ?? 0),
+    ragasError: experiment.ragasError ?? null,
+    ragasStartedAt: experiment.ragasStartedAt ?? null,
+    ragasCompletedAt: experiment.ragasCompletedAt ?? null,
+    localDurationMs: experiment.localDurationMs == null ? null : Number(experiment.localDurationMs),
+    requestedBatchSize: experiment.requestedBatchSize == null ? null : Number(experiment.requestedBatchSize),
+    effectiveBatchSize: experiment.effectiveBatchSize == null ? null : Number(experiment.effectiveBatchSize),
+    oomFallbackCount: Number(experiment.oomFallbackCount ?? 0),
   }
 }
 
@@ -236,6 +264,9 @@ function toUiExperimentResult(result) {
     datasetVersion: result.datasetVersion,
     promptVersion: result.promptVersion,
     metricStandard: result.metricStandard,
+    ragasStatus: result.ragasStatus ?? null,
+    ragasError: result.ragasError ?? null,
+    ragasEvaluatedAt: result.ragasEvaluatedAt ?? null,
     judgeModel: result.judgeModel,
     evaluatorEmbedding: result.evaluatorEmbedding,
     sourceHit: result.sourceHit,

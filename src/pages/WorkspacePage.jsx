@@ -2,8 +2,12 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Archive,
   Bot,
+  BrainCircuit,
   Check,
   ChevronDown,
+  ChevronUp,
+  Circle,
+  CircleCheck,
   Clipboard,
   Clock3,
   ExternalLink,
@@ -53,11 +57,18 @@ import {
 import { cn } from '../utils/cn.js'
 
 const EMPTY_MATERIALS = { chapters: [], unclassifiedMaterials: [] }
-const CHAT_DEADLINE_MS = 55_000
+const CHAT_DEADLINE_MS = 125_000
 const PHASE_LABELS = {
+  QUESTION_ANALYSIS: 'chat.phaseQuestionAnalysis',
   SCOPE_CHECK: 'chat.phaseScope',
+  QUERY_EXPANSION: 'chat.phaseQueryExpansion',
   RETRIEVAL: 'chat.phaseRetrieval',
+  EVIDENCE_SELECTION: 'chat.phaseEvidenceSelection',
+  COVERAGE_CHECK: 'chat.phaseCoverageCheck',
   GENERATION_START: 'chat.phaseGeneration',
+  GROUNDING_CHECK: 'chat.phaseGroundingCheck',
+  REPAIR: 'chat.phaseRepair',
+  CITATION_SAVE: 'chat.phaseCitationSave',
 }
 
 const FALLBACK_T = (key, params = {}) => {
@@ -103,6 +114,7 @@ export default function WorkspacePage() {
   const [answering, setAnswering] = useState(false)
   const [answerElapsedMs, setAnswerElapsedMs] = useState(0)
   const [processingPhase, setProcessingPhase] = useState('')
+  const [processingTrace, setProcessingTrace] = useState([])
   const [streamError, setStreamError] = useState(null)
   const [copiedId, setCopiedId] = useState('')
   const [sessionMenuId, setSessionMenuId] = useState('')
@@ -112,6 +124,7 @@ export default function WorkspacePage() {
   const [savingNote, setSavingNote] = useState(false)
   const abortRef = useRef(null)
   const answerStartedAtRef = useRef(0)
+  const processingTraceRef = useRef([])
   const messagesEndRef = useRef(null)
   const initialSessionIdRef = useRef(urlSearchParams.get('session'))
   const skipHistorySessionIdRef = useRef('')
@@ -305,7 +318,9 @@ export default function WorkspacePage() {
     answerStartedAtRef.current = performance.now()
     setAnswerElapsedMs(0)
     setAnswering(true)
-    setProcessingPhase('SCOPE_CHECK')
+    setProcessingPhase('QUESTION_ANALYSIS')
+    processingTraceRef.current = []
+    setProcessingTrace([])
     const pendingUserId = `user-${crypto.randomUUID()}`
     const pendingAssistantId = `assistant-${crypto.randomUUID()}`
     let receivedDeltaCount = 0
@@ -340,7 +355,25 @@ export default function WorkspacePage() {
         mode: 'rag',
         signal: controller.signal,
         onEvent: ({ type, data }) => {
-          if (PHASE_LABELS[type]) setProcessingPhase(type)
+          if (PHASE_LABELS[type]) {
+            setProcessingPhase(type)
+            const nextTrace = [
+              ...processingTraceRef.current.map((item) => (
+                item.status === 'STARTED' ? { ...item, status: 'COMPLETED' } : item
+              )),
+              {
+                step: type,
+                status: data?.status ?? 'STARTED',
+                messageKey: data?.messageKey,
+                elapsedMs: data?.elapsedMs ?? Math.round(performance.now() - answerStartedAtRef.current),
+                metadata: data?.metadata ?? {},
+              },
+            ].filter((item, index, items) => (
+              items.findIndex((candidate) => candidate.step === item.step) === index
+            ))
+            processingTraceRef.current = nextTrace
+            setProcessingTrace(nextTrace)
+          }
           if (type === 'DELTA') {
             receivedDeltaCount += 1
             bufferedDelta += data?.text ?? ''
@@ -382,6 +415,9 @@ export default function WorkspacePage() {
               citations: result.citations ?? message.citations,
               generationMode: result.generationMode,
               latencyMs: result.latencyMs ?? Math.round(performance.now() - answerStartedAtRef.current),
+              answerDepth: result.answerDepth,
+              questionIntent: result.questionIntent,
+              processingTrace: result.processingTrace ?? processingTraceRef.current,
               streaming: false,
               animateResponse: receivedDeltaCount <= 1,
             }
@@ -404,6 +440,9 @@ export default function WorkspacePage() {
             citations: result.citations ?? [],
             generationMode: result.generationMode,
             latencyMs: result.latencyMs ?? Math.round(performance.now() - answerStartedAtRef.current),
+            answerDepth: result.answerDepth,
+            questionIntent: result.questionIntent,
+            processingTrace: result.processingTrace ?? processingTraceRef.current,
             streaming: false,
             animateResponse: receivedDeltaCount <= 1,
           })
@@ -450,6 +489,8 @@ export default function WorkspacePage() {
       abortRef.current = null
       setAnswering(false)
       setProcessingPhase('')
+      processingTraceRef.current = []
+      setProcessingTrace([])
     }
   }
 
@@ -591,6 +632,7 @@ export default function WorkspacePage() {
           onSave={prepareNote}
           answerElapsedMs={answerElapsedMs}
           processingPhase={processingPhase}
+          processingTrace={processingTrace}
           streamError={streamError}
           t={t}
           onReuseQuestion={(question) => { setInput(question); setStreamError(null) }}
@@ -681,7 +723,7 @@ function ChatTopbar({ onMenu, onNew, onSources, scopeLabel, t, title }) {
 
 function ChatThread({
   activeScopeLabel, answerElapsedMs, copiedId, endRef, loading, messages, onCitation, onCopy, onReuseQuestion,
-  onSave, processingPhase, streamError, t,
+  onSave, processingPhase, processingTrace, streamError, t,
 }) {
   return (
     <section className="min-h-0 flex-1 overflow-y-auto" aria-label={t('chat.threadLabel')}>
@@ -704,7 +746,13 @@ function ChatThread({
               />
             ))}
             {processingPhase ? (
-              <ProcessingStatus elapsedMs={answerElapsedMs} phase={processingPhase} t={t} />
+              <ProcessingTimeline
+                elapsedMs={answerElapsedMs}
+                live
+                phase={processingPhase}
+                t={t}
+                trace={processingTrace}
+              />
             ) : null}
             {streamError ? (
               <div className="ml-11 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -796,6 +844,13 @@ export function AssistantMessage({ copied, message, onCitation, onCopy, onSave, 
         <Bot size={16} />
       </div>
       <div className="min-w-0 flex-1">
+        {message.processingTrace?.length ? (
+          <ProcessingTimeline
+            elapsedMs={message.latencyMs}
+            t={t}
+            trace={message.processingTrace}
+          />
+        ) : null}
         {message.content ? (
           <div aria-live="polite">
             <MarkdownMessage content={renderedContent} />
@@ -1186,27 +1241,59 @@ function DialogActions({ busy, confirmLabel, danger, onCancel, onConfirm }) {
   )
 }
 
-function ProcessingStatus({ elapsedMs, phase, t }) {
-  const warning = elapsedMs >= 40_000
+function ProcessingTimeline({ elapsedMs = 0, live = false, phase = '', t, trace = [] }) {
+  const [expanded, setExpanded] = useState(live)
+  const warning = elapsedMs >= 90_000
+
   return (
-    <div className="ml-11 max-w-sm space-y-2 text-sm text-slate-500" role="status">
-      <div className="flex items-center justify-between gap-4">
-        <span className="inline-flex min-w-0 items-center gap-2">
-          <Loader2 className={cn('shrink-0 animate-spin', warning ? 'text-amber-600' : 'text-teal-700')} size={15} />
-          <span className="truncate">{PHASE_LABELS[phase] ? t(PHASE_LABELS[phase]) : t('chat.processingDefault')}</span>
-        </span>
-        <span className={cn('shrink-0 font-mono text-xs tabular-nums', warning && 'font-semibold text-amber-700')}>
-          {formatTimer(elapsedMs)}
-        </span>
-      </div>
-      <div className="relative h-1 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
-        <div
-          className={cn(
-            'chat-progress-indicator absolute inset-y-0 w-1/3 rounded-full',
-            warning ? 'bg-amber-500' : 'bg-teal-600',
+    <div className={cn('mb-4 max-w-xl text-sm', live && 'ml-11')} role={live ? 'status' : undefined}>
+      <button
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 py-1 text-left text-slate-600 hover:text-slate-900"
+        onClick={() => setExpanded((value) => !value)}
+        type="button"
+      >
+        {live
+          ? <Loader2 className={cn('animate-spin', warning ? 'text-amber-600' : 'text-teal-700')} size={16} />
+          : <BrainCircuit className="text-teal-700" size={16} />}
+        <span className="font-medium">{t('chat.processTitle')}</span>
+        <span className="ml-auto font-mono text-xs tabular-nums">{formatTimer(elapsedMs)}</span>
+        {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+      </button>
+      {expanded ? (
+        <div className="ml-2 mt-2 border-l border-slate-200 pl-5">
+          {trace.length ? trace.map((item, index) => {
+            const active = live && (item.step === phase || index === trace.length - 1)
+            const labelKey = PHASE_LABELS[item.step]
+            return (
+              <div className="relative pb-3 last:pb-0" key={`${item.step}-${index}`}>
+                <span className="absolute -left-[27px] top-0.5 grid size-3 place-items-center bg-white">
+                  {active
+                    ? <Loader2 className="animate-spin text-teal-700" size={13} />
+                    : item.status === 'FAILED'
+                      ? <Circle className="text-red-500" fill="currentColor" size={10} />
+                      : <CircleCheck className="text-teal-700" size={14} />}
+                </span>
+                <p className={cn('leading-5', active ? 'font-medium text-slate-800' : 'text-slate-600')}>
+                  {labelKey ? t(labelKey) : t('chat.processingDefault')}
+                </p>
+                {Number.isFinite(item.metadata?.evidenceCount) ? (
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {t('chat.evidenceSummary', {
+                      evidence: item.metadata.evidenceCount,
+                      pages: item.metadata.pageCount ?? 0,
+                    })}
+                  </p>
+                ) : null}
+              </div>
+            )
+          }) : (
+            <p className="text-slate-500">
+              {PHASE_LABELS[phase] ? t(PHASE_LABELS[phase]) : t('chat.processingDefault')}
+            </p>
           )}
-        />
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }
