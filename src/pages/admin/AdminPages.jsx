@@ -1628,8 +1628,8 @@ export function AdminResearchDashboardPage() {
                 <ScoreStat label="Answer relevance" value={currentMetrics.answerRelevance} />
                 <ScoreStat label="Context precision" value={currentMetrics.contextPrecision} />
                 <ScoreStat label="Context recall" value={currentMetrics.contextRecall} />
-                <ScoreStat label="Answer correctness" value={currentMetrics.answerCorrectness} />
-                <ScoreStat label="Semantic similarity" value={currentMetrics.semanticSimilarity} />
+                <ScoreStat label="Token overlap (proxy)" value={currentMetrics.answerCorrectness} />
+                <ScoreStat label="Legacy similarity (proxy)" value={currentMetrics.semanticSimilarity} />
               </div>
             </Panel>
           ) : null}
@@ -1704,8 +1704,8 @@ function ResultMetrics({ result }) {
     ['Relevance', result.answerRelevance],
     ['Precision', result.contextPrecision],
     ['Recall', result.contextRecall],
-    ['Correctness', result.answerCorrectness],
-    ['Similarity', result.semanticSimilarity],
+    ['Token overlap (proxy)', result.answerCorrectness],
+    ['Legacy similarity (proxy)', result.semanticSimilarity],
   ]
 
   return (

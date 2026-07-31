@@ -34,6 +34,22 @@ vi.mock('../../services/evaluationService.js', () => ({
     id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG', experimentType: 'RAG',
     llmModel: 'qwen-rag-lora', status: 'CANCELLED', progress: 35, successCount: 1, failureCount: 0,
   }),
+  runBenchmark: vi.fn().mockResolvedValue({
+    id: 'experiment-1', datasetId: 'dataset-1', name: 'Fine baseline', method: 'Fine-tuned',
+    experimentType: 'FINE_TUNED', llmModel: 'Qwen/Qwen2.5-1.5B-Instruct',
+    status: 'QUEUED', progress: 0, successCount: 0, failureCount: 0,
+    modelVerificationStatus: 'UNVERIFIED',
+  }),
+  runBenchmarkPair: vi.fn().mockResolvedValue({
+    rag: {
+      id: 'rag-1', datasetId: 'dataset-1', name: 'RAG pair', experimentType: 'RAG',
+      method: 'RAG', status: 'QUEUED', progress: 0, successCount: 0, failureCount: 0,
+    },
+    fineTuned: {
+      id: 'fine-1', datasetId: 'dataset-1', name: 'Fine pair', experimentType: 'FINE_TUNED',
+      method: 'Fine-tuned', status: 'QUEUED', progress: 0, successCount: 0, failureCount: 0,
+    },
+  }),
   waitForExperiment: vi.fn(() => new Promise(() => {})),
 }))
 
@@ -60,7 +76,7 @@ it('shows the five-step workflow and keeps document selection in the dataset sna
   expect(await screen.findByRole('heading', { name: 'Dataset snapshot' })).toBeInTheDocument()
   expect(await screen.findByText('Lecture.pdf')).toBeInTheDocument()
   expect(screen.getByText('1 selected')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Monitor runs/i })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Monitor runs/i })).toBeEnabled()
 })
 
 it('moves to Ground truth after snapshot creation and confirms the selected snapshot', async () => {
@@ -138,8 +154,70 @@ it('shows a queued benchmark profile and allows cancellation before GPU executio
 
   await openStep('Monitor runs')
   expect(await screen.findAllByText('Queued')).toHaveLength(2)
-  expect(screen.getByText('Full 50 / Batch 4 / 64 tokens')).toBeInTheDocument()
+  expect(screen.getByText('Full 50 / Batch 4 / up to 64 tokens')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Cancel run' }))
 
   await waitFor(() => expect(evaluationService.cancelBenchmark).toHaveBeenCalledWith('experiment-1'))
+})
+
+it('runs an eligible unverified fine-tuned adapter as research only', async () => {
+  evaluationService.getExperiments.mockResolvedValueOnce([{
+    id: 'experiment-1', datasetId: 'dataset-1', name: 'Fine baseline', method: 'Fine-tuned',
+    experimentType: 'FINE_TUNED', llmModel: 'Qwen/Qwen2.5-1.5B-Instruct',
+    status: 'PENDING', progress: 0, successCount: 0, failureCount: 0,
+  }])
+  evaluationService.getReadiness.mockResolvedValue({
+    ready: false,
+    benchmarkReady: true,
+    requiresUnverifiedAcknowledgement: true,
+    modelVerificationStatus: 'UNVERIFIED',
+    checks: [{ code: 'model', passed: false, message: 'Quality gate failed.' }],
+    blockers: [{ code: 'model', message: 'Quality gate failed.' }],
+  })
+  render(<AdminTestSetPage />)
+
+  await openStep('Review and launch')
+  expect(await screen.findByText('RESEARCH ONLY / UNVERIFIED')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Run benchmark' }))
+
+  await waitFor(() => expect(evaluationService.runBenchmark).toHaveBeenCalledWith(
+    'experiment-1',
+    { allowUnverifiedModel: true },
+  ))
+})
+
+it('offers Run directly on a pending model card', async () => {
+  evaluationService.getReadiness.mockResolvedValue({
+    ready: true,
+    benchmarkReady: true,
+    requiresUnverifiedAcknowledgement: false,
+    checks: [{ code: 'model', passed: true, message: 'Model ready.' }],
+    blockers: [],
+  })
+  render(<AdminTestSetPage />)
+
+  await openStep('Monitor runs')
+  fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
+
+  await waitFor(() => expect(evaluationService.runBenchmark).toHaveBeenCalledWith(
+    'experiment-1',
+    { allowUnverifiedModel: false },
+  ))
+})
+
+it('does not report final completion or allow rerun while RAGAS is still running', async () => {
+  evaluationService.getExperiments.mockResolvedValueOnce([{
+    id: 'experiment-1', datasetId: 'dataset-1', name: 'RAG baseline', method: 'RAG',
+    experimentType: 'RAG', llmModel: 'Qwen/Qwen2.5-1.5B-Instruct',
+    status: 'COMPLETED', progress: 100, successCount: 50, failureCount: 0,
+    ragasStatus: 'RUNNING', ragasProgress: 12, localDurationMs: 1000,
+  }])
+  render(<AdminTestSetPage />)
+
+  await openStep('Monitor runs')
+
+  expect(await screen.findByText('Official RAGAS: RUNNING')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'RAGAS running' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Rerun' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Processed')).not.toBeInTheDocument()
 })

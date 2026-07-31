@@ -325,7 +325,7 @@ export function PreflightLaunchStep({
 
   const isPending = selectedExperiment.status === 'PENDING'
   const isActive = ['QUEUED', 'RUNNING'].includes(selectedExperiment.status)
-  const launchReady = Boolean(readiness?.ready) && isPending
+  const launchReady = Boolean(readiness?.ready || readiness?.benchmarkReady) && isPending
 
   return (
     <StepPanel
@@ -354,7 +354,8 @@ export function PreflightLaunchStep({
           {!loadingReadiness && (readiness?.checks ?? []).map((check) => <ReadinessCheck check={check} key={check.code} />)}
           {!loadingReadiness && !readiness ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">Readiness is unavailable. Refresh this step before launching a benchmark.</div> : null}
         </div>
-        <p className="mt-4 text-xs leading-5 text-slate-500">Metrics are transparent local proxies, not official RAGAS. Context and citation metrics do not apply to Fine-tuned runs.</p>
+        {readiness?.requiresUnverifiedAcknowledgement ? <InlineNotice tone="warning"><strong className="block">RESEARCH ONLY / UNVERIFIED</strong>The adapter has not passed its quality gate. This run is allowed for research comparison and all results will retain the UNVERIFIED label.</InlineNotice> : null}
+        <p className="mt-4 text-xs leading-5 text-slate-500">Faithfulness, answer relevancy, context precision, and context recall use official RAGAS evaluation. Token overlap remains an internal proxy; context metrics do not apply to Fine-tuned-only runs.</p>
       </section>
 
       <div className="mt-6 flex flex-wrap gap-2">
@@ -367,7 +368,28 @@ export function PreflightLaunchStep({
   )
 }
 
-export function BenchmarkRunsStep({ datasetExperiments, onCancel, onCreateAnother, onRerun, questions, selectedExperimentId, submitting }) {
+export function BenchmarkRunsStep({
+  datasetExperiments,
+  onCancel,
+  onCreateAnother,
+  onFineTunedExperimentChange,
+  onRagExperimentChange,
+  onRerun,
+  onRunPair,
+  questions,
+  selectedExperimentId,
+  selectedFineTunedExperimentId,
+  selectedRagExperimentId,
+  submitting,
+}) {
+  const ragRuns = datasetExperiments.filter((item) => item.experimentType === 'RAG')
+  const fineRuns = datasetExperiments.filter((item) => item.experimentType === 'FINE_TUNED')
+  const selectedRag = ragRuns.find((item) => item.id === selectedRagExperimentId)
+  const selectedFine = fineRuns.find((item) => item.id === selectedFineTunedExperimentId)
+  const pairReady = questions.length === 50
+    && selectedRag?.status === 'PENDING'
+    && selectedFine?.status === 'PENDING'
+
   return (
     <StepPanel
       eyebrow="Step 5 of 5"
@@ -376,6 +398,32 @@ export function BenchmarkRunsStep({ datasetExperiments, onCancel, onCreateAnothe
       title="Monitor runs"
       actions={<Button onClick={onCreateAnother} size="sm" type="button" variant="secondary"><Plus size={14} />Add configuration</Button>}
     >
+      <section className="mt-6 border-b border-slate-100 pb-6" aria-labelledby="paired-run-heading">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900" id="paired-run-heading">Chạy cặp so sánh</h3>
+            <p className="mt-1 text-xs font-medium leading-5 text-slate-500">Hai luồng chuẩn bị song song; một GPU xử lý batch xen kẽ để tránh tràn VRAM.</p>
+          </div>
+          <Button disabled={submitting || !pairReady} onClick={onRunPair} type="button">
+            <Play size={16} />Chạy so sánh 50 câu
+          </Button>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <FieldGroup label="RAG configuration">
+            <select className="control" onChange={(event) => onRagExperimentChange(event.target.value)} value={selectedRagExperimentId}>
+              <option value="">Select RAG</option>
+              {ragRuns.map((item) => <option key={item.id} value={item.id}>{item.name} / {item.status}</option>)}
+            </select>
+          </FieldGroup>
+          <FieldGroup label="Fine-tuned configuration">
+            <select className="control" onChange={(event) => onFineTunedExperimentChange(event.target.value)} value={selectedFineTunedExperimentId}>
+              <option value="">Select Fine-tuned</option>
+              {fineRuns.map((item) => <option key={item.id} value={item.id}>{item.name} / {item.status}</option>)}
+            </select>
+          </FieldGroup>
+        </div>
+        {questions.length !== 50 ? <p className="mt-3 text-xs font-semibold text-amber-700">Cần đúng 50 câu ground truth để chạy cặp. Hiện có {questions.length} câu.</p> : null}
+      </section>
       {datasetExperiments.length ? <div className="mt-6 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white/60">
         {datasetExperiments.map((experiment) => <RunCard experiment={experiment} fallbackTotal={questions.length} key={experiment.id} onCancel={onCancel} onRerun={onRerun} selected={selectedExperimentId === experiment.id} submitting={submitting} />)}
       </div> : <EmptyState title="No benchmark configuration" description="Return to Step 3 to save a RAG or Fine-tuned configuration for this snapshot." action={<Button onClick={onCreateAnother} type="button"><Plus size={16} />Create configuration</Button>} />}
@@ -388,7 +436,7 @@ export function WorkflowSummary({ dataset, experiment, questions, stepState }) {
     { label: 'Snapshot', value: dataset ? dataset.name : 'Not selected', complete: stepState[1] === 'complete' },
     { label: 'Ground truth', value: `${questions.length} question${questions.length === 1 ? '' : 's'}`, complete: stepState[2] === 'complete' },
     { label: 'Configuration', value: experiment ? experiment.name : 'Not saved', complete: stepState[3] === 'complete' },
-    { label: 'Launch status', value: experiment ? statusForBadge(experiment.status) : 'Not started', complete: stepState[4] === 'complete' },
+    { label: 'Launch status', value: experiment ? runStatusForBadge(experiment) : 'Not started', complete: stepState[4] === 'complete' },
   ]
 
   return (
@@ -445,21 +493,38 @@ function ReadinessCheck({ check }) {
 
 function RunCard({ experiment, fallbackTotal, onCancel, onRerun, selected, submitting }) {
   const active = ['QUEUED', 'RUNNING'].includes(experiment.status)
-  const completed = experiment.status === 'COMPLETED'
+  const localCompleted = experiment.status === 'COMPLETED'
+  const ragasActive = localCompleted && ['PENDING', 'RUNNING'].includes(experiment.ragasStatus)
+  const fullyCompleted = localCompleted
+    && (!experiment.ragasStatus || experiment.ragasStatus === 'COMPLETED')
+  const canRun = experiment.status === 'PENDING'
+  const canRerun = ['FAILED', 'CANCELLED'].includes(experiment.status)
+    || (localCompleted && ['COMPLETED', 'FAILED'].includes(experiment.ragasStatus))
   const processed = experiment.successCount + experiment.failureCount
   const total = Number(experiment.benchmarkProfile?.questionCount ?? fallbackTotal ?? 0)
   const eta = estimateRemainingSeconds(experiment, processed, total)
   const profile = experiment.benchmarkProfile
+  const maxTokens = profile?.tokenBudgets?.DEEP?.maxNewTokens ?? profile?.maxNewTokens
 
   return <article className={cn('p-4 sm:p-5', selected && 'bg-teal-50/45')}>
-    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-slate-950" title={experiment.name}>{experiment.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{experiment.method} / {experiment.llmModel}</p></div><StatusBadge status={statusForBadge(experiment.status)} /></div>
-    {active ? <div className="mt-4"><div className="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-slate-600"><span>{experiment.status === 'QUEUED' ? 'Queued for GPU' : `Processed ${processed}/${total || '?'}`}</span><span>{experiment.status === 'RUNNING' && eta != null ? `${experiment.progress}% / ETA ${formatDuration(eta)}` : `${experiment.progress}%`}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, experiment.progress))}%` }} /></div><p className="mt-2 text-xs font-medium text-slate-500">{profile ? `Full ${profile.questionCount} / Batch ${profile.batchSize} / ${profile.maxNewTokens} tokens` : 'Full benchmark / Batch 4 / 64 tokens'}</p></div> : null}
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-slate-950" title={experiment.name}>{experiment.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">{experiment.method} / {experiment.llmModel}</p>{experiment.modelVerificationStatus === 'UNVERIFIED' ? <p className="mt-1 text-[11px] font-black text-amber-700">RESEARCH ONLY / UNVERIFIED</p> : null}</div><StatusBadge status={runStatusForBadge(experiment)} /></div>
+    {active ? <div className="mt-4"><div className="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-slate-600"><span>{experiment.status === 'QUEUED' ? 'Queued for GPU' : `Local ${processed}/${total || '?'}`}</span><span>{experiment.status === 'RUNNING' && eta != null ? `${experiment.progress}% / ETA ${formatDuration(eta)}` : `${experiment.progress}%`}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, experiment.progress))}%` }} /></div><p className="mt-2 text-xs font-medium text-slate-500">{profile ? `Full ${profile.questionCount} / Batch ${profile.batchSize} / up to ${maxTokens ?? '—'} tokens` : 'Full benchmark / Batch 4 / adaptive tokens'}</p></div> : null}
+    {localCompleted ? <div className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">Local inference finished{experiment.localDurationMs ? ` after ${formatDuration(Math.round(experiment.localDurationMs / 1000))}` : ''}. {ragasActive ? 'Official RAGAS is still evaluating the answers.' : ''}</div> : null}
+    {localCompleted && experiment.ragasStatus ? <div className="mt-3"><div className="mb-2 flex justify-between gap-3 text-xs font-semibold text-slate-600"><span>Official RAGAS: {experiment.ragasStatus}</span><span>{experiment.ragasProgress}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-sky-500 transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, experiment.ragasProgress))}%` }} /></div>{experiment.ragasError ? <p className="mt-2 text-xs font-medium text-red-700">{experiment.ragasError}</p> : null}</div> : null}
+    {experiment.effectiveBatchSize === 1 && experiment.requestedBatchSize > 1 ? <p className="mt-3 text-xs font-semibold text-amber-700">GPU đã fallback về batch 1; mục tiêu 10 phút có thể không đạt.</p> : null}
     {experiment.status === 'PENDING' ? <p className="mt-3 text-sm font-medium text-sky-800">Ready to launch from Step 4.</p> : null}
     {experiment.status === 'QUEUED' ? <p className="mt-3 text-sm font-medium text-slate-700">Waiting for the current GPU job to finish.</p> : null}
     {experiment.status === 'CANCELLED' ? <p className="mt-3 text-sm font-medium text-slate-700">Cancelled at {experiment.progress}%. You can rerun it from the beginning.</p> : null}
     {experiment.errorMessage ? <p className="mt-3 text-sm font-medium leading-6 text-red-700">{experiment.errorMessage}</p> : null}
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-medium text-slate-500">{experiment.successCount} succeeded / {experiment.failureCount} failed</p><div className="flex flex-wrap gap-2">{active ? <Button disabled={submitting} onClick={() => onCancel(experiment)} size="sm" type="button" variant="danger"><Square size={13} />Cancel run</Button> : null}{['FAILED', 'CANCELLED'].includes(experiment.status) ? <Button disabled={submitting} onClick={() => onRerun(experiment)} size="sm" type="button" variant="secondary"><Play size={13} />Rerun</Button> : null}{completed ? <Link className="inline-flex min-h-8 items-center justify-center rounded-xl border border-border bg-white/90 px-3 text-xs font-black text-primary shadow-sm transition hover:border-teal-200 hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500" to="/admin/research-dashboard">Open research report</Link> : null}</div></div>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs font-medium text-slate-500">{experiment.successCount} succeeded / {experiment.failureCount} failed</p><div className="flex flex-wrap gap-2">{active ? <Button disabled={submitting} onClick={() => onCancel(experiment)} size="sm" type="button" variant="danger"><Square size={13} />Cancel run</Button> : null}{canRun ? <Button disabled={submitting} onClick={() => onRerun(experiment)} size="sm" type="button"><Play size={13} />Run</Button> : null}{canRerun ? <Button disabled={submitting} onClick={() => onRerun(experiment)} size="sm" type="button" variant="secondary"><Play size={13} />Rerun</Button> : null}{ragasActive ? <Button disabled size="sm" type="button" variant="secondary">RAGAS running</Button> : null}{fullyCompleted ? <Link className="inline-flex min-h-8 items-center justify-center rounded-xl border border-border bg-white/90 px-3 text-xs font-black text-primary shadow-sm transition hover:border-teal-200 hover:bg-teal-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-500" to="/admin/research-dashboard">Open research report</Link> : null}</div></div>
   </article>
+}
+
+function runStatusForBadge(experiment) {
+  if (['RUNNING', 'QUEUED'].includes(experiment.status)) return statusForBadge(experiment.status)
+  if (experiment.status === 'COMPLETED' && ['PENDING', 'RUNNING'].includes(experiment.ragasStatus)) return 'Processing'
+  if (experiment.status === 'COMPLETED' && experiment.ragasStatus === 'FAILED') return 'Failed'
+  return statusForBadge(experiment.status)
 }
 
 function statusForBadge(status) {

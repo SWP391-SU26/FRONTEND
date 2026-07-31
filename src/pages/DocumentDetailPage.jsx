@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { BentoCard, Button, ConfirmModal, EmptyState, Field, Panel, StatusBadge } from '../components/ui.jsx'
+import StudentShell from '../components/StudentShell.jsx'
 import {
   getDocument,
   getDocumentChunks,
@@ -26,8 +27,17 @@ import {
 } from '../services/documentService.js'
 import { deleteFile } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
+import { formatFileSize } from '../utils/fileSize.js'
 
 function DocumentDetailPage() {
+  return (
+    <StudentShell mobileTitle="Chi tiết tài liệu">
+      <DocumentDetailContent />
+    </StudentShell>
+  )
+}
+
+function DocumentDetailContent() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -205,7 +215,7 @@ function DocumentDetailPage() {
   }
 
   return (
-    <div className="space-y-6 min-h-[calc(100vh-4rem)] pb-12">
+    <div className="mx-auto min-h-[calc(100vh-4rem)] max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {/* HEADER / NAVIGATION */}
       <div className="flex items-center justify-between">
         <Link
@@ -325,7 +335,7 @@ function DocumentDetailPage() {
             <h2 className="text-sm font-black tracking-tight text-slate-900">Document metadata</h2>
             <div className="mt-4 grid gap-2">
               <MetaRow icon={FileText} label="File name" value={doc.name} />
-              <MetaRow icon={HardDrive} label="File size" value={doc.size || 'Unknown size'} />
+              <MetaRow icon={HardDrive} label="File size" value={formatFileSize(doc.fileSizeBytes)} />
               <MetaRow icon={FileText} label="Subject" value={doc.subject} />
               <MetaRow icon={FileText} label="Chapter" value={doc.chapter || 'All Chapters'} />
               <MetaRow icon={CalendarDays} label="Uploaded" value={doc.uploadedAt} />

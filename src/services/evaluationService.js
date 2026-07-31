@@ -75,8 +75,26 @@ export async function createExperiment(payload) {
   }))
 }
 
-export async function runBenchmark(experimentId) {
-  return toUiExperiment(await request(`/evaluation/experiments/${experimentId}/run`, { method: 'POST' }))
+export async function runBenchmark(experimentId, { allowUnverifiedModel = false } = {}) {
+  return toUiExperiment(await request(`/evaluation/experiments/${experimentId}/run`, {
+    method: 'POST',
+    body: JSON.stringify({ allowUnverifiedModel }),
+  }))
+}
+
+export async function runBenchmarkPair({
+  ragExperimentId,
+  fineTunedExperimentId,
+  allowUnverifiedModel = false,
+}) {
+  const response = await request('/evaluation/experiments/run-pair', {
+    method: 'POST',
+    body: JSON.stringify({ ragExperimentId, fineTunedExperimentId, allowUnverifiedModel }),
+  })
+  return {
+    rag: toUiExperiment(response?.rag),
+    fineTuned: toUiExperiment(response?.fineTuned),
+  }
 }
 
 export async function cancelBenchmark(experimentId) {
@@ -88,7 +106,11 @@ export async function waitForExperiment(experimentId, { onProgress, timeoutMs = 
   while (Date.now() < deadline) {
     const experiment = await getExperiment(experimentId)
     onProgress?.(experiment)
-    if (['COMPLETED', 'CANCELLED'].includes(experiment.status)) return experiment
+    if (experiment.status === 'CANCELLED') return experiment
+    if (experiment.status === 'COMPLETED'
+      && (!experiment.ragasStatus || ['COMPLETED', 'FAILED'].includes(experiment.ragasStatus))) {
+      return experiment
+    }
     if (experiment.status === 'FAILED') {
       const error = new Error(experiment.errorMessage || 'Benchmark failed.')
       error.code = 'BENCHMARK_FAILED'
@@ -194,6 +216,8 @@ function toUiExperiment(experiment) {
     llmModel: experiment.llmModel,
     configJson: experiment.configJson,
     benchmarkProfile: parsedConfig.benchmarkProfile ?? null,
+    modelVerificationStatus: parsedConfig.modelVerificationStatus ?? null,
+    allowUnverifiedModel: Boolean(parsedConfig.allowUnverifiedModel),
     status: experiment.status || 'PENDING',
     progress: Number(experiment.progress ?? 0),
     successCount: Number(experiment.successCount ?? 0),
@@ -204,6 +228,15 @@ function toUiExperiment(experiment) {
     createdAt: experiment.createdAt,
     updatedAt: experiment.updatedAt,
     errorMessage: experiment.errorMessage ?? null,
+    ragasStatus: experiment.ragasStatus ?? null,
+    ragasProgress: Number(experiment.ragasProgress ?? 0),
+    ragasError: experiment.ragasError ?? null,
+    ragasStartedAt: experiment.ragasStartedAt ?? null,
+    ragasCompletedAt: experiment.ragasCompletedAt ?? null,
+    localDurationMs: experiment.localDurationMs == null ? null : Number(experiment.localDurationMs),
+    requestedBatchSize: experiment.requestedBatchSize == null ? null : Number(experiment.requestedBatchSize),
+    effectiveBatchSize: experiment.effectiveBatchSize == null ? null : Number(experiment.effectiveBatchSize),
+    oomFallbackCount: Number(experiment.oomFallbackCount ?? 0),
   }
 }
 
@@ -222,8 +255,27 @@ function toUiExperimentResult(result) {
     answerRelevance: result.answerRelevance,
     contextPrecision: result.contextPrecision,
     contextRecall: result.contextRecall,
-    answerCorrectness: result.answerCorrectness,
-    semanticSimilarity: result.semanticSimilarity,
+    tokenOverlapProxy: result.answerCorrectness,
+    providerUsed: result.providerUsed,
+    baseModel: result.baseModel,
+    adapterVersion: result.adapterVersion,
+    embeddingModel: result.embeddingModel,
+    generationMode: result.generationMode,
+    datasetVersion: result.datasetVersion,
+    promptVersion: result.promptVersion,
+    metricStandard: result.metricStandard,
+    ragasStatus: result.ragasStatus ?? null,
+    ragasError: result.ragasError ?? null,
+    ragasEvaluatedAt: result.ragasEvaluatedAt ?? null,
+    judgeModel: result.judgeModel,
+    evaluatorEmbedding: result.evaluatorEmbedding,
+    sourceHit: result.sourceHit,
+    pageHit: result.pageHit,
+    refusalCorrect: result.refusalCorrect,
+    throughputQps: result.throughputQps,
+    peakVramBytes: result.peakVramBytes,
+    modelVerificationStatus: result.modelVerificationStatus,
+    qualityGatePassed: result.qualityGatePassed,
     latencyMs: result.latencyMs,
     batchLatencyMs: result.batchLatencyMs,
     effectiveLatencyMs: result.effectiveLatencyMs ?? result.latencyMs,

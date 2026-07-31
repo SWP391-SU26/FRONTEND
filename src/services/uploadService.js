@@ -1,4 +1,9 @@
-import { deleteDocument, uploadDocument, waitForIndexingJob } from './documentService.js'
+import {
+  deleteDocument,
+  uploadDocument,
+  waitForDocumentIndexing,
+  waitForIndexingJob,
+} from './documentService.js'
 
 let uploads = []
 const listeners = new Set()
@@ -111,6 +116,7 @@ async function runUpload(uploadId, file, metadata) {
       preview: result.job?.id ? 'Indexing document chunks...' : 'Upload completed.',
     })
 
+    let indexedDocument = uploadedDoc
     if (result.job?.id) {
       await waitForIndexingJob(result.job.id, {
         onProgress: (job) => {
@@ -124,12 +130,30 @@ async function runUpload(uploadId, file, metadata) {
           })
         },
       })
+    } else if (
+      uploadedDoc.id
+      && ['Pending', 'Processing', 'Processed', 'Uploaded'].includes(uploadedDoc.status)
+    ) {
+      indexedDocument = await waitForDocumentIndexing(uploadedDoc.id, {
+        onProgress: (document) => {
+          updateUpload(uploadId, {
+            ...document,
+            status: document.status,
+            stage: document.status === 'Indexed' ? 'Completed' : 'Indexing',
+            progress: document.status === 'Indexed' ? 100 : 55,
+            preview: document.status === 'Indexed'
+              ? 'Upload and indexing completed.'
+              : 'Creating semantic embeddings...',
+          })
+        },
+      })
     }
 
     const completedDoc = {
       ...uploadedDoc,
-      status: result.job ? 'Indexed' : uploadedDoc.status,
-      embeddingStatus: result.job ? 'Prepared' : uploadedDoc.embeddingStatus,
+      ...indexedDocument,
+      status: 'Indexed',
+      embeddingStatus: 'Prepared',
     }
 
     updateUpload(uploadId, {
@@ -145,13 +169,14 @@ async function runUpload(uploadId, file, metadata) {
     window.dispatchEvent(new CustomEvent('fstu:document-uploaded', { detail: completedDoc }))
     return completedDoc
   } catch (error) {
+    const indexingStillRunning = error.code === 'INDEXING_TIMEOUT'
     updateUpload(uploadId, {
-      status: 'Failed',
-      stage: 'Failed',
-      progress: 100,
+      status: indexingStillRunning ? 'Processing' : 'Failed',
+      stage: indexingStillRunning ? 'Indexing' : 'Failed',
+      progress: indexingStillRunning ? 90 : 100,
       preview: error.message,
       isUploading: false,
-      errorMessage: error.message,
+      errorMessage: indexingStillRunning ? '' : error.message,
       completedAt: Date.now(),
     })
     throw error
@@ -159,7 +184,16 @@ async function runUpload(uploadId, file, metadata) {
 }
 
 function updateUpload(id, patch) {
-  uploads = uploads.map((item) => (item.id === id ? { ...item, ...patch } : item))
+  uploads = uploads.map((item) => {
+    if (item.id !== id) return item
+    const { id: documentId, ...safePatch } = patch
+    return {
+      ...item,
+      ...safePatch,
+      id: item.id,
+      documentId: documentId ?? item.documentId,
+    }
+  })
   notify()
 }
 

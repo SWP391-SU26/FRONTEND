@@ -14,14 +14,16 @@ import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '../utils/cn.js'
 import { getSavedUser, clearSession, logout, isAdminSession, isAuthenticated } from '../services/authService.js'
 import { getAdminDashboardHealth } from '../services/adminDashboardService.js'
+import { LanguageSwitch } from '../components/LanguageSwitch.jsx'
+import { useLocale } from '../i18n/LocaleContext.jsx'
 
 const adminNav = [
-  { href: '/admin/dashboard', label: 'Dashboard', icon: Gauge },
-  { href: '/admin/users', label: 'Users', icon: Users },
-  { href: '/admin/documents', label: 'Documents', icon: FileText },
-  { href: '/admin/courses', label: 'Courses', icon: BookOpen },
-  { href: '/admin/test-set', label: 'Test Set', icon: ClipboardList },
-  { href: '/admin/research-dashboard', label: 'Research', icon: BarChart3 },
+  { href: '/admin/dashboard', labelKey: 'admin.dashboard', icon: Gauge },
+  { href: '/admin/users', labelKey: 'admin.users', icon: Users },
+  { href: '/admin/documents', labelKey: 'admin.documents', icon: FileText },
+  { href: '/admin/courses', labelKey: 'admin.courses', icon: BookOpen },
+  { href: '/admin/test-set', labelKey: 'admin.testSet', icon: ClipboardList },
+  { href: '/admin/research-dashboard', labelKey: 'admin.research', icon: BarChart3 },
 ]
 
 const AdminOperationalHealthContext = createContext({
@@ -36,6 +38,7 @@ export function useAdminOperationalHealth() {
 
 function AdminLayout() {
   const navigate = useNavigate()
+  const { t } = useLocale()
   const user = getSavedUser()
   const initials = getInitials(user?.name)
   const [operationalHealth, setOperationalHealth] = useState({ status: 'loading', value: null })
@@ -60,12 +63,12 @@ function AdminLayout() {
   }, [updateOperationalHealth])
 
   const operationalHealthLabel = operationalHealth.status === 'loading'
-    ? 'Checking status'
+    ? t('admin.checkingStatus')
     : operationalHealth.status === 'unavailable'
-      ? 'Status unavailable'
+      ? t('admin.statusUnavailable')
       : operationalHealth.value?.status === 'OK'
-        ? 'System healthy'
-        : 'Needs attention'
+        ? t('admin.systemHealthy')
+        : t('admin.needsAttention')
 
   const operationalHealthClassName = operationalHealth.status === 'unavailable'
     ? 'bg-slate-100 text-slate-600'
@@ -105,9 +108,9 @@ function AdminLayout() {
                 />
               </span>
               <span>
-                <span className="block text-lg font-black tracking-tight">FStu Admin</span>
+                <span className="block text-lg font-black tracking-tight">{t('admin.brand')}</span>
                 <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
-                  Knowledge operations
+                  {t('admin.subtitle')}
                 </span>
               </span>
             </NavLink>
@@ -131,7 +134,7 @@ function AdminLayout() {
                   to={item.href}
                 >
                   <Icon size={17} />
-                  <span className="truncate">{item.label}</span>
+                  <span className="truncate">{t(item.labelKey)}</span>
                 </NavLink>
               )
             })}
@@ -141,8 +144,8 @@ function AdminLayout() {
         <div className="min-w-0 flex-1">
           <header className="notebook-panel mb-3 flex flex-wrap items-center justify-between gap-3 p-3">
             <div className="min-w-0 flex-1 px-2">
-              <p className="text-sm font-black tracking-tight text-slate-900">Admin workspace</p>
-              <p className="truncate text-xs font-semibold text-slate-500">Users, course materials, and research operations</p>
+              <p className="text-sm font-black tracking-tight text-slate-900">{t('admin.workspace')}</p>
+              <p className="truncate text-xs font-semibold text-slate-500">{t('admin.workspaceDescription')}</p>
             </div>
             <div className="flex items-center gap-2">
               <NavLink
@@ -152,9 +155,10 @@ function AdminLayout() {
               >
                 {operationalHealthLabel}
               </NavLink>
+              <LanguageSwitch compact />
               <NavLink
                 className="grid size-10 place-items-center rounded-xl border border-border bg-white/90 text-slate-600 shadow-sm transition hover:bg-teal-50 hover:text-primary"
-                title="Back to workspace"
+                title={t('common.backToWorkspace')}
                 to="/workspace"
               >
                 <Home size={16} />
@@ -162,7 +166,7 @@ function AdminLayout() {
               <button
                 className="grid size-10 place-items-center rounded-xl border border-border bg-white/90 text-slate-600 shadow-sm transition hover:bg-red-50 hover:text-red-650"
                 onClick={handleLogout}
-                title="Log out"
+                title={t('common.logOut')}
                 type="button"
               >
                 <LogOut size={16} />

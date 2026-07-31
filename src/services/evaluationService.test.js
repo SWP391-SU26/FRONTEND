@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('./httpClient.js', () => ({ request: vi.fn() }))
 
 import { request } from './httpClient.js'
-import { createDataset, createExperiment, getExperiment } from './evaluationService.js'
+import {
+  createDataset,
+  createExperiment,
+  getExperiment,
+  runBenchmark,
+  runBenchmarkPair,
+} from './evaluationService.js'
 
 describe('Flow 5 evaluation API contract', () => {
   beforeEach(() => request.mockReset())
@@ -59,5 +65,44 @@ describe('Flow 5 evaluation API contract', () => {
     expect(experiment.benchmarkProfile).toEqual({
       questionCount: 50, batchSize: 4, maxInputTokens: 448, maxNewTokens: 64,
     })
+  })
+
+  it('sends explicit consent when Admin runs an unverified adapter', async () => {
+    request.mockResolvedValue({
+      experimentId: 'experiment-1',
+      experimentType: 'FINE_TUNED',
+      status: 'QUEUED',
+    })
+
+    await runBenchmark('experiment-1', { allowUnverifiedModel: true })
+
+    expect(request).toHaveBeenCalledWith('/evaluation/experiments/experiment-1/run', {
+      method: 'POST',
+      body: JSON.stringify({ allowUnverifiedModel: true }),
+    })
+  })
+
+  it('starts a paired RAG and Fine-tuned benchmark with one request', async () => {
+    request.mockResolvedValue({
+      rag: { experimentId: 'rag-1', experimentType: 'RAG', status: 'QUEUED' },
+      fineTuned: { experimentId: 'fine-1', experimentType: 'FINE_TUNED', status: 'QUEUED' },
+    })
+
+    const pair = await runBenchmarkPair({
+      ragExperimentId: 'rag-1',
+      fineTunedExperimentId: 'fine-1',
+      allowUnverifiedModel: true,
+    })
+
+    expect(request).toHaveBeenCalledWith('/evaluation/experiments/run-pair', {
+      method: 'POST',
+      body: JSON.stringify({
+        ragExperimentId: 'rag-1',
+        fineTunedExperimentId: 'fine-1',
+        allowUnverifiedModel: true,
+      }),
+    })
+    expect(pair.rag.id).toBe('rag-1')
+    expect(pair.fineTuned.id).toBe('fine-1')
   })
 })

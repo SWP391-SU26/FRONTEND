@@ -6,7 +6,6 @@ import RegisterPage from './pages/RegisterPage.jsx'
 import ResetPasswordPage from './pages/ResetPasswordPage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
 import AdminLayout from './layouts/AdminLayout.jsx'
-import MainLayout from './layouts/MainLayout.jsx'
 import {
   AdminDashboardPage,
   AdminDocumentsPage,
@@ -62,14 +61,12 @@ function App() {
         <Route path="experiments" element={<Navigate replace to="/admin/research-dashboard" />} />
         <Route path="logs" element={<Navigate replace to="/admin/research-dashboard" />} />
       </Route>
-      <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
-        <Route element={<Navigate replace to="/workspace" />} path="/app" />
-        <Route element={<WorkspacePage />} path="/workspace" />
-        <Route element={<Navigate replace to="/workspace" />} path="/chat" />
-        <Route element={<LibraryPage />} path="/library" />
-        <Route element={<DocumentDetailPage />} path="/library/documents/:id" />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
+      <Route element={<RequireAuth><WorkspacePage /></RequireAuth>} path="/workspace" />
+      <Route element={<RequireAuth><Navigate replace to="/workspace" /></RequireAuth>} path="/chat" />
+      <Route element={<RequireAuth><Navigate replace to="/workspace" /></RequireAuth>} path="/app" />
+      <Route element={<RequireAuth><LibraryPage /></RequireAuth>} path="/library" />
+      <Route element={<RequireAuth><DocumentDetailPage /></RequireAuth>} path="/library/documents/:id" />
+      <Route element={<RequireAuth><NotFoundPage /></RequireAuth>} path="*" />
       </Routes>
     </>
   )
