@@ -25,6 +25,7 @@ import {
   isAdminSession,
   isAuthenticated,
 } from './services/authService.js'
+import { resumeActiveUploads } from './services/uploadService.js'
 
 function App() {
   const [, setAuthVersion] = useState(0)
@@ -33,6 +34,12 @@ function App() {
     const handleUnauthorized = () => setAuthVersion((value) => value + 1)
     window.addEventListener('fstu:unauthorized', handleUnauthorized)
     return () => window.removeEventListener('fstu:unauthorized', handleUnauthorized)
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      resumeActiveUploads()
+    }
   }, [])
 
   return (

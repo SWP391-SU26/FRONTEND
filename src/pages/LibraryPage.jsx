@@ -12,9 +12,9 @@ import { Button, ConfirmModal, EmptyState, IconButton, SelectField } from '../co
 import { getCurrentUserId } from '../services/authService.js'
 import { getLearningScope } from '../services/courseService.js'
 import {
-  cancelDocumentSubmission, deleteDocument, getDocuments, getMyDocuments,
-  submitDocument, uploadPersonalDocument,
+  cancelDocumentSubmission, getDocuments, getMyDocuments, submitDocument,
 } from '../services/documentService.js'
+import { deleteFile, uploadPersonalFiles } from '../services/uploadService.js'
 import { cn } from '../utils/cn.js'
 import {
   buildLibraryHierarchy, searchLibraryDocuments, sortLibraryDocuments,
@@ -45,7 +45,6 @@ function LibraryContent() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
   const [submitTarget, setSubmitTarget] = useState(null)
   const [submitCourseId, setSubmitCourseId] = useState('')
   const [busyId, setBusyId] = useState('')
@@ -142,22 +141,18 @@ function LibraryContent() {
     setError('')
     setNotice('')
     try {
-      for (let index = 0; index < files.length; index += 1) {
-        const document = await uploadPersonalDocument({
-          file: files[index],
-          onUploadProgress: (progress) =>
-            setUploadProgress(Math.round(((index + progress / 100) / files.length) * 100)),
-        })
-        setMine((current) => [document, ...current.filter((item) => item.id !== document.id)])
-      }
-      setUploadProgress(100)
+      const tasks = uploadPersonalFiles(files)
+      const documents = await Promise.all(tasks.map((task) => task.promise))
+      setMine((current) => [
+        ...documents,
+        ...current.filter((item) => !documents.some((document) => document.id === item.id)),
+      ])
       setNotice(`Đã tải lên ${files.length} tài liệu vào Tài liệu của tôi.`)
       navigate('/library?folder=personal')
     } catch (requestError) {
       setError(requestError.message)
     } finally {
       setUploading(false)
-      setUploadProgress(0)
     }
   }
 
@@ -196,7 +191,7 @@ function LibraryContent() {
     if (!deleteTarget) return
     setBusyId(deleteTarget.id)
     try {
-      await deleteDocument(deleteTarget.id)
+      await deleteFile(deleteTarget)
       setMine((current) => current.filter((item) => item.id !== deleteTarget.id))
       setShared((current) => current.filter((item) => item.id !== deleteTarget.id))
       setNotice('Đã xóa tài liệu.')
@@ -238,7 +233,7 @@ function LibraryContent() {
         </div>
         <Button disabled={uploading} onClick={() => fileInputRef.current?.click()}>
           {uploading ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />}
-          {uploading ? `Đang tải ${uploadProgress}%` : 'Tải tài liệu lên'}
+          {uploading ? 'Đang tải tài liệu...' : 'Tải tài liệu lên'}
         </Button>
         <input
           ref={fileInputRef}

@@ -1,6 +1,7 @@
 import { env } from '../config/env.js'
 import { getCurrentUserId, isAdminSession } from './authService.js'
 import { request } from './httpClient.js'
+import { shouldUseResumable, uploadFileResumable } from './resumableUploadService.js'
 
 export async function getDocuments() {
   const documents = unwrapList(await request(`/documents${withRequesterQuery()}`)).map(toUiDocument)
@@ -54,18 +55,11 @@ export function getDocumentPreviewUrl(document) {
 }
 
 export async function uploadDocument({ file, workspaceId, courseId, chapterId, onUploadProgress }) {
-  const formData = new FormData()
-  formData.append('file', file)
-  if (workspaceId) formData.append('workspaceId', workspaceId)
-  if (courseId) formData.append('courseId', courseId)
-  if (chapterId) formData.append('chapterId', chapterId)
-
-  const result = onUploadProgress
-    ? await uploadFormData('/documents/upload', formData, onUploadProgress)
-    : await request('/documents/upload', {
-        method: 'POST',
-        body: formData,
-      })
+  // Large files go through the resumable endpoint so a dropped connection
+  // costs one 2 MB range instead of the whole transfer.
+  const result = shouldUseResumable(file)
+    ? await uploadFileResumable({ file, workspaceId, courseId, chapterId, onUploadProgress })
+    : await uploadDocumentInOneRequest({ file, workspaceId, courseId, chapterId, onUploadProgress })
   const document = result?.document ?? result
   return {
     document: await enrichDocumentChunkCount(toUiDocument(document)),
@@ -73,20 +67,37 @@ export async function uploadDocument({ file, workspaceId, courseId, chapterId, o
   }
 }
 
-export async function uploadPersonalDocument({ file, onUploadProgress }) {
+function uploadDocumentInOneRequest({ file, workspaceId, courseId, chapterId, onUploadProgress }) {
   const formData = new FormData()
   formData.append('file', file)
-  const result = onUploadProgress
-    ? await uploadFormData('/documents/personal', formData, onUploadProgress)
-    : await request('/documents/personal', { method: 'POST', body: formData })
+  if (workspaceId) formData.append('workspaceId', workspaceId)
+  if (courseId) formData.append('courseId', courseId)
+  if (chapterId) formData.append('chapterId', chapterId)
+  return onUploadProgress
+    ? uploadFormData('/documents/upload', formData, onUploadProgress)
+    : request('/documents/upload', { method: 'POST', body: formData })
+}
+
+export async function uploadPersonalDocument({ file, onIndexingProgress, onUploadProgress }) {
+  const result = shouldUseResumable(file)
+    ? await uploadFileResumable({ file, onUploadProgress })
+    : await uploadPersonalInOneRequest(file, onUploadProgress)
   const document = await enrichDocumentChunkCount(toUiDocument(result?.document ?? result))
   if (
     document.id
     && ['Pending', 'Processing', 'Processed', 'Uploaded'].includes(document.status)
   ) {
-    return waitForDocumentIndexing(document.id)
+    return waitForDocumentIndexing(document.id, { onProgress: onIndexingProgress })
   }
   return document
+}
+
+function uploadPersonalInOneRequest(file, onUploadProgress) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return onUploadProgress
+    ? uploadFormData('/documents/personal', formData, onUploadProgress)
+    : request('/documents/personal', { method: 'POST', body: formData })
 }
 
 export async function submitDocument(documentId, courseId) {
@@ -132,6 +143,31 @@ export async function retryIndexingJob(jobId) {
   return toUiIndexingJob(await request(`/indexing-jobs/${jobId}/retry`, { method: 'POST' }))
 }
 
+export async function retryDocumentProcessing(documentId) {
+  return request(`/documents/${documentId}/retry`, { method: 'POST' })
+}
+
+/**
+ * Live progress of the background processing job. The backend already returns a
+ * ready-to-render percentage plus the embedded/total counts, so the UI never has
+ * to guess or parse internal step names.
+ */
+export async function getProcessingStatus(documentId) {
+  const job = await request(`/documents/${documentId}/processing-status`)
+  if (!job) return null
+  return {
+    jobId: job.jobId ?? null,
+    status: job.status ?? null,
+    step: job.step ?? null,
+    processedItems: job.processedItems ?? null,
+    totalItems: job.totalItems ?? null,
+    percent: Number.isFinite(job.percent) ? job.percent : 0,
+    finished: Boolean(job.finished),
+    failed: Boolean(job.failed),
+    errorMessage: job.errorMessage ?? null,
+  }
+}
+
 export async function waitForIndexingJob(jobId, { onProgress, timeoutMs = 300000 } = {}) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -156,8 +192,11 @@ export async function waitForDocumentIndexing(
 ) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    // Ask the job for live progress first; it reports embedded/total counts, so
+    // the bar can move continuously instead of sitting on one placeholder value.
+    const job = await getProcessingStatus(documentId).catch(() => null)
     const document = await getDocument(documentId)
-    onProgress?.(document)
+    onProgress?.(job ? { ...document, job } : document)
     if (document.status === 'Indexed') {
       return enrichDocumentChunkCount(document)
     }
