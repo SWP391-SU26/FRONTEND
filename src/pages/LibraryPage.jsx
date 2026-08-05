@@ -20,7 +20,6 @@ import {
   buildLibraryHierarchy, searchLibraryDocuments, sortLibraryDocuments,
 } from './libraryModel.js'
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024
 const ACCEPTED_TYPES = ['pdf', 'docx', 'pptx']
 const VIEW_STORAGE_KEY = 'fstu.library.view'
 
@@ -131,10 +130,9 @@ function LibraryContent() {
     event.target.value = ''
     if (!files.length) return
     const invalid = files.find((file) =>
-      !ACCEPTED_TYPES.includes(file.name.split('.').pop()?.toLowerCase())
-      || file.size > MAX_FILE_SIZE)
+      !ACCEPTED_TYPES.includes(file.name.split('.').pop()?.toLowerCase()))
     if (invalid) {
-      setError('Chỉ nhận PDF, DOCX, PPTX và tối đa 20 MB cho mỗi tệp.')
+      setError('Chỉ nhận tệp PDF, DOCX hoặc PPTX. Hạn mức kích thước được kiểm tra theo gói hiện tại của bạn.')
       return
     }
     setUploading(true)
