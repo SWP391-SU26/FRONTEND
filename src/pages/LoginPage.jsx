@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import AuthAlert from '../components/auth/AuthAlert.jsx'
 import AuthInput from '../components/auth/AuthInput.jsx'
 import AuthShell from '../components/auth/AuthShell.jsx'
@@ -19,6 +19,7 @@ const initialForm = {
 
 function LoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [form, setForm] = useState(initialForm)
   const [errors, setErrors] = useState({})
   const [formError, setFormError] = useState('')
@@ -62,7 +63,10 @@ function LoginPage() {
     try {
       const session = await login(form)
       saveSession(session)
-      navigate(getDefaultRouteForUser(session.user))
+      const returnTo = location.state?.returnTo
+      navigate(typeof returnTo === 'string' && returnTo.startsWith('/')
+        ? returnTo
+        : getDefaultRouteForUser(session.user))
     } catch (error) {
       setFormError(error.message)
     } finally {

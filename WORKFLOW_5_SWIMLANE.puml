@@ -1,0 +1,68 @@
+@startuml
+title Post-run Experiment Evaluation and Dataset Comparison
+
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam ArrowColor #475569
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #64748B
+  FontColor #0F172A
+  DiamondBackgroundColor #FEF3C7
+  DiamondBorderColor #D97706
+}
+skinparam swimlane {
+  BorderColor #CBD5E1
+  TitleBackgroundColor #E2E8F0
+  TitleFontColor #0F172A
+}
+
+|Admin / Researcher|
+start
+note right
+  Entry point: Run Experiment confirmed.
+  Steps 1-10 apply to each RAG or
+  Fine-tuned experiment.
+end note
+
+|Evaluation Platform|
+:1. Validate experiment, dataset, documents,\nquestions, and model; show any blocker;
+:2. Freeze the dataset checksum\nand benchmark profile;
+:3. Clear previous results, set QUEUED,\nthen start the selected experiment;
+:4. Load benchmark questions in batches with\nground truth and expected source/page;
+
+|AI Runtime / Evaluator|
+:5. Generate answers:\nRAG retrieves frozen contexts;\nFine-tuned generates without retrieval;
+:6. Build evaluation evidence from question,\nanswer, ground truth, contexts, and citations;
+:7. Run Official RAGAS:\nanswer relevance plus RAG grounding metrics;
+:8. Calculate token-overlap proxy,\nsource/page hit, refusal, and runtime metrics;
+
+note right
+  Official RAGAS:
+  - Faithfulness
+  - Answer relevance
+  - Context precision / recall
+
+  Internal:
+  - Token-overlap proxy
+  - Source / page hit
+  - Refusal correctness
+  - Latency / throughput
+end note
+
+|Evaluation Platform|
+:9. Persist one result row per question\nand update success, failure, and progress;
+:10. Finish the experiment as COMPLETED,\nFAILED, or CANCELLED;
+
+|Admin / Researcher|
+:11. Select one completed RAG run and\none completed Fine-tuned run;
+
+|Evaluation Platform|
+:12. Verify both runs use the same dataset,\nchecksum, and benchmark profile;
+:13. Aggregate run averages, hit/success rates,\nlatency, and per-question deltas;
+
+|Admin / Researcher|
+:14. Review summary, question-level evidence,\nerrors and limits, then draw a conclusion;
+stop
+
+@enduml

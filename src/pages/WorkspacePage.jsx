@@ -161,22 +161,36 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     let active = true
-    Promise.all([getLearningScope(), getMyDocuments(), getSessions()])
-      .then(([scope, mine, history]) => {
+    Promise.allSettled([getLearningScope(), getMyDocuments(), getSessions()])
+      .then(([scopeResult, documentsResult, sessionsResult]) => {
         if (!active) return
+        const scope = scopeResult.status === 'fulfilled' ? scopeResult.value : []
+        const mine = documentsResult.status === 'fulfilled' ? documentsResult.value : []
+        const history = sessionsResult.status === 'fulfilled' ? sessionsResult.value : []
         const next = Array.isArray(scope) ? scope : []
+        const nextPersonalDocuments = (mine ?? []).filter(isProcessedDocument)
         setSemesters(next)
         setSemesterId(next[0]?.semesterId ?? '')
         setCourseId(next[0]?.courses?.[0]?.courseId ?? '')
-        setPersonalDocuments((mine ?? []).filter(isProcessedDocument))
+        setPersonalDocuments(nextPersonalDocuments)
+        if (!next.length && nextPersonalDocuments.length) {
+          setScopeType('PERSONAL')
+          setSelectedDocumentIds([nextPersonalDocuments[0].id])
+        }
         const sortedHistory = sortSessions(history)
         setSessions(sortedHistory)
         const requestedSession = sortedHistory.find(
           (item) => String(item.id) === String(initialSessionIdRef.current),
         )
         if (requestedSession) setSession(requestedSession)
+        const failedResult = [scopeResult, documentsResult, sessionsResult]
+          .find((result) => result.status === 'rejected')
+        if (failedResult) {
+          setStreamError({
+            message: readError(failedResult.reason, t('chat.loadWorkspaceError'), t),
+          })
+        }
       })
-      .catch((error) => setStreamError({ message: readError(error, t('chat.loadWorkspaceError'), t) }))
       .finally(() => active && setLoading(false))
     return () => { active = false }
   // Keep initial workspace loading independent from locale changes so switching
@@ -585,7 +599,7 @@ export default function WorkspacePage() {
     return <FullScreenState icon={Loader2} spin title={t('chat.loadingWorkspace')} />
   }
 
-  if (!semesters.length) {
+  if (!semesters.length && !personalDocuments.length) {
     return <FullScreenState icon={Archive} title={t('chat.noAvailableDocuments')} />
   }
 

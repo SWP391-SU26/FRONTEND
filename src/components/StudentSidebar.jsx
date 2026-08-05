@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Library, Loader2, LogOut, MessageSquareText, MoreHorizontal,
   PanelLeftClose, PanelLeftOpen, Pencil, Pin, Plus, Search,
-  Settings, ShieldCheck, Trash2,
+  Crown, ReceiptText, Settings, ShieldCheck, Trash2,
 } from 'lucide-react'
 import { Link, NavLink } from 'react-router-dom'
 import { isAdminSession } from '../services/authService.js'
@@ -24,7 +24,6 @@ export default function StudentSidebar({
       <div className="flex h-16 items-center gap-2 px-3">
         <Link className="flex min-w-0 flex-1 items-center gap-2" to="/workspace">
           <img alt="FStu" className="h-9 w-12 object-contain" src="/Gemini_Generated_Image_gyb1mfgyb1mfgyb1.png" />
-          {!collapsed ? <span className="font-extrabold text-slate-900">{t('sidebar.brand')}</span> : null}
         </Link>
         {!collapsed ? <SidebarAction label={t('sidebar.close')} onClick={onCollapse}><PanelLeftClose size={18} /></SidebarAction> : null}
       </div>
@@ -131,6 +130,8 @@ export default function StudentSidebar({
       <nav className="border-t border-slate-200 p-2" aria-label={t('common.workspace')}>
         <SidebarLink collapsed={collapsed} icon={MessageSquareText} label={t('common.aiChat')} to="/workspace" />
         <SidebarLink collapsed={collapsed} icon={Library} label={t('common.library')} to="/library" />
+        <SidebarLink collapsed={collapsed} icon={Crown} label={t('common.pro')} to="/pro" />
+        <SidebarLink collapsed={collapsed} icon={ReceiptText} label={t('common.payments')} to="/payments" />
         <SidebarLink collapsed={collapsed} icon={Settings} label={t('common.settings')} to="/settings" />
         {isAdminSession() ? <SidebarLink collapsed={collapsed} icon={ShieldCheck} label={t('common.admin')} to="/admin" /> : null}
         <div className={cn('my-1', collapsed ? 'flex justify-center' : '')}>
@@ -155,7 +156,7 @@ export default function StudentSidebar({
 
   return (
     <>
-      <div className="hidden h-full lg:block">{sidebar}</div>
+      <div className="sticky top-0 hidden h-dvh shrink-0 self-start lg:block">{sidebar}</div>
       <AnimatePresence>
         {open ? (
           <motion.div

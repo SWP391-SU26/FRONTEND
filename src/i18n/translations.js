@@ -4,6 +4,8 @@ export const LOCALE_STORAGE_KEY = 'fstu_locale'
 export const translations = {
   vi: {
     common: {
+      pro: 'Gói PRO',
+      payments: 'Lịch sử thanh toán',
       language: 'Ngôn ngữ',
       vietnamese: 'Tiếng Việt',
       english: 'English',
@@ -54,6 +56,8 @@ export const translations = {
       embeddingCount: 'Đang tạo embedding: {done}/{total} đoạn',
     },
     admin: {
+      payments: 'Thanh toán',
+      plans: 'Gói dịch vụ',
       brand: 'FStu Admin',
       subtitle: 'Knowledge operations',
       workspace: 'Admin workspace',
@@ -163,6 +167,8 @@ export const translations = {
   },
   en: {
     common: {
+      pro: 'PRO plan',
+      payments: 'Payment history',
       language: 'Language',
       vietnamese: 'Tiếng Việt',
       english: 'English',
@@ -213,6 +219,8 @@ export const translations = {
       embeddingCount: 'Creating embeddings: {done}/{total} chunks',
     },
     admin: {
+      payments: 'Payments',
+      plans: 'Plans',
       brand: 'FStu Admin',
       subtitle: 'Knowledge operations',
       workspace: 'Admin workspace',
