@@ -10,10 +10,22 @@ import {
 
 const RESUMABLE_STATUSES = new Set(['Pending', 'Processing', 'Uploaded'])
 
+// The raw file transfer owns 0-UPLOAD_PHASE_END%; everything from there to 100%
+// is the backend job's own percent (QUEUED..EXTRACTING..OCR..CHUNKING..EMBEDDING..
+// COMPLETED, already 0-100 across the whole pipeline) rescaled into the remainder,
+// so the bar rises continuously through every stage instead of sitting on a floor
+// value until embedding starts and then jumping straight to 100.
+const UPLOAD_PHASE_END = 15
+
+function scaleIndexingPercent(percent) {
+  const safePercent = Number.isFinite(percent) ? percent : 0
+  return UPLOAD_PHASE_END + Math.round(safePercent * ((100 - UPLOAD_PHASE_END) / 100))
+}
+
 /**
  * Maps a polled document (optionally carrying live job progress) onto the upload
  * card. Server-side percent covers extraction → OCR → chunking → embedding, so
- * the bar advances continuously instead of jumping 55% → 100%.
+ * the bar advances continuously instead of jumping 45% → 100%.
  */
 function indexingPatch(document) {
   const job = document.job
@@ -31,12 +43,11 @@ function indexingPatch(document) {
     return {
       status: document.status,
       stage: 'Indexing',
-      progress: 55,
+      progress: UPLOAD_PHASE_END,
       previewKey: 'uploadProgress.embedding',
     }
   }
-  // The upload itself owns 0-45%; the backend job owns the rest.
-  const progress = Math.min(99, Math.max(45, Math.round(job.percent)))
+  const progress = Math.min(99, Math.max(UPLOAD_PHASE_END, scaleIndexingPercent(job.percent)))
   const hasCounts = Number.isFinite(job.processedItems) && Number.isFinite(job.totalItems)
   return {
     status: document.status,
@@ -83,12 +94,12 @@ export function uploadFile(file, metadata) {
   return startUpload(file, metadata).promise
 }
 
-export function uploadPersonalFiles(files) {
-  return Array.from(files).map((file) => startUpload(file, { scope: 'PERSONAL' }))
+export function uploadPersonalFiles(files, workspaceId) {
+  return Array.from(files).map((file) => startUpload(file, { scope: 'PERSONAL', workspaceId }))
 }
 
-export function uploadPersonalFile(file) {
-  return startUpload(file, { scope: 'PERSONAL' }).promise
+export function uploadPersonalFile(file, workspaceId) {
+  return startUpload(file, { scope: 'PERSONAL', workspaceId }).promise
 }
 
 export function deleteFile(document) {
@@ -121,7 +132,10 @@ export function clearFinishedUploads() {
  * the job itself keeps running server-side regardless.
  */
 export function resumeActiveUploads() {
-  return getMyDocuments()
+  // Resuming only needs identity and processing state. Live job polling below
+  // supplies progress/counts, so fetching every document's chunks here delays
+  // the whole app without improving the restored upload card.
+  return getMyDocuments({ enrichChunkCounts: false })
     .then((documents) => {
       documents
         .filter((doc) => RESUMABLE_STATUSES.has(doc.status))
@@ -151,7 +165,7 @@ function trackExistingDocument(document) {
     type: document.type || 'FILE',
     status: document.status,
     stage: 'Indexing',
-    progress: 55,
+    progress: UPLOAD_PHASE_END,
     uploadProgress: 100,
     indexingProgress: null,
     chunks: document.chunks ?? 0,
@@ -239,10 +253,13 @@ async function runUpload(uploadId, file, metadata) {
     if (metadata.scope === 'PERSONAL') {
       const personalDocument = await uploadPersonalDocument({
         file,
+        workspaceId: metadata.workspaceId,
         onUploadProgress: (percent) => {
           updateUpload(uploadId, {
             uploadProgress: percent,
-            progress: percent >= 100 ? 50 : clampProgress(Math.round(percent * 0.45)),
+            progress: percent >= 100
+              ? UPLOAD_PHASE_END
+              : clampProgress(Math.round(percent * (UPLOAD_PHASE_END / 100))),
             stage: percent >= 100 ? 'Processing' : 'Uploading',
             previewKey: percent >= 100
               ? 'uploadProgress.preparingDocument'
@@ -281,7 +298,7 @@ async function runUpload(uploadId, file, metadata) {
       onUploadProgress: (percent) => {
         updateUpload(uploadId, {
           uploadProgress: percent,
-          progress: clampProgress(Math.round(percent * 0.45)),
+          progress: clampProgress(Math.round(percent * (UPLOAD_PHASE_END / 100))),
           previewKey: 'uploadProgress.uploading',
         })
       },
@@ -292,7 +309,7 @@ async function runUpload(uploadId, file, metadata) {
       ...uploadedDoc,
       status: result.job?.id ? 'Processing' : uploadedDoc.status,
       stage: result.job?.id ? 'Indexing' : 'Uploaded',
-      progress: result.job?.id ? 50 : 100,
+      progress: result.job?.id ? UPLOAD_PHASE_END : 100,
       uploadProgress: 100,
       previewKey: result.job?.id
         ? 'uploadProgress.indexingChunks'
@@ -308,7 +325,7 @@ async function runUpload(uploadId, file, metadata) {
             status: job.stage === 'INDEXED' ? 'Indexed' : 'Processing',
             stage: formatStage(job.stage),
             indexingProgress,
-            progress: clampProgress(45 + Math.round(indexingProgress * 0.55)),
+            progress: clampProgress(scaleIndexingPercent(indexingProgress)),
             previewKey: 'uploadProgress.indexingStage',
             previewParams: { stage: formatStage(job.stage) },
           })

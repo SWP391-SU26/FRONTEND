@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { LocaleProvider } from '../../i18n/LocaleContext.jsx'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -32,6 +32,9 @@ vi.mock('../../services/evaluationService.js', () => ({
     { id: 'fine-1', datasetId: 'dataset-1', name: 'Fine-tuned 6', experimentType: 'FINE_TUNED', status: 'COMPLETED', datasetChecksum: 'same-checksum' },
   ]),
   getComparison: vi.fn().mockResolvedValue(comparison),
+  createEvaluationReport: vi.fn().mockResolvedValue({ reportId: 'report-1' }),
+  waitForEvaluationReport: vi.fn().mockResolvedValue({ reportId: 'report-1', status: 'COMPLETED', progress: 100 }),
+  downloadEvaluationReport: vi.fn().mockResolvedValue(new Blob(['%PDF-test'], { type: 'application/pdf' })),
 }))
 
 import * as evaluationService from '../../services/evaluationService.js'
@@ -78,6 +81,30 @@ it('rerenders research report chrome in English when the stored locale is Englis
   expect(await screen.findByText('Experimental conclusion')).toBeInTheDocument()
   expect(screen.getByText('Quality comparison')).toBeInTheDocument()
   expect(screen.getByLabelText('Filter results')).toBeInTheDocument()
+})
+
+it('generates a fresh backend report before downloading PDF', async () => {
+  localStorage.setItem('fstu_locale', 'en')
+  const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:report')
+  const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  renderPage()
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate new PDF' }))
+
+  await waitFor(() => {
+    expect(evaluationService.createEvaluationReport).toHaveBeenCalledWith(expect.objectContaining({
+      datasetId: 'dataset-1', ragExperimentId: 'rag-1', fineTunedExperimentId: 'fine-1', language: 'en',
+    }))
+    expect(evaluationService.waitForEvaluationReport).toHaveBeenCalledWith(
+      'report-1', expect.objectContaining({ onProgress: expect.any(Function) }),
+    )
+    expect(evaluationService.downloadEvaluationReport).toHaveBeenCalledWith('report-1', 'PDF')
+    expect(click).toHaveBeenCalled()
+  })
+  createObjectUrl.mockRestore()
+  revokeObjectUrl.mockRestore()
+  click.mockRestore()
 })
 
 describe('report helpers', () => {

@@ -23,6 +23,7 @@ import PaymentResultPage from './pages/PaymentResultPage.jsx'
 import ProPlanPage from './pages/ProPlanPage.jsx'
 import PaymentsPage from './pages/PaymentsPage.jsx'
 import AdminPlansPage from './pages/admin/AdminPlansPage.jsx'
+import AdminFeedbackPage from './pages/admin/AdminFeedbackPage.jsx'
 import { UploadProgressPopup } from './components/UploadProgressPopup.jsx'
 import {
   getDefaultRouteForUser,
@@ -72,6 +73,7 @@ function App() {
         <Route path="research-dashboard" element={<AdminResearchDashboardPage />} />
         <Route path="payments" element={<AdminPaymentsPage />} />
         <Route path="plans" element={<AdminPlansPage />} />
+        <Route path="feedback" element={<AdminFeedbackPage />} />
         {/* Redirects: old standalone pages → unified Research Dashboard */}
         <Route path="indexing" element={<Navigate replace to="/admin/research-dashboard" />} />
         <Route path="model-settings" element={<Navigate replace to="/admin/research-dashboard" />} />

@@ -33,6 +33,26 @@ vi.mock('../services/courseService.js', () => ({
   }]),
 }))
 
+vi.mock('../services/workspaceService.js', () => ({
+  createPersonalWorkspace: vi.fn(),
+  deletePersonalWorkspace: vi.fn(),
+  getPersonalWorkspaces: vi.fn().mockResolvedValue([
+    { id: 'workspace-1', title: 'Tài liệu cá nhân', description: 'Ghi chú riêng' },
+    { id: 'workspace-2', title: 'Toán', description: 'Bài tập Toán' },
+  ]),
+  getStorageUsage: vi.fn().mockResolvedValue({
+    usedBytes: 1024,
+    maxStorageBytes: 100 * 1024 * 1024,
+    documentCount: 1,
+    maxDocuments: 10,
+    maxFileBytes: 10 * 1024 * 1024,
+    workspaceCount: 2,
+    maxPersonalWorkspaces: 5,
+  }),
+  moveDocumentToWorkspace: vi.fn(),
+  renamePersonalWorkspace: vi.fn(),
+}))
+
 vi.mock('../services/documentService.js', () => ({
   getMyDocuments: vi.fn().mockResolvedValue([{
     id: 'personal-1',
@@ -40,6 +60,7 @@ vi.mock('../services/documentService.js', () => ({
     type: 'PDF',
     status: 'Processed',
     documentScope: 'PERSONAL',
+    workspaceId: 'workspace-1',
     reviewStatus: 'NOT_SUBMITTED',
     uploadedBy: 'user-1',
     uploaderName: 'Nguyễn An',
@@ -97,7 +118,7 @@ it('navigates through Semester and Course folders and shows uploader metadata', 
 })
 
 it('keeps unapproved owned documents in the personal folder and labels the owner as Bạn', async () => {
-  renderPage('/library?folder=personal')
+  renderPage('/library?folder=personal&workspace=workspace-1')
 
   expect(await screen.findByText('Ghi chú cá nhân.pdf')).toBeInTheDocument()
   expect(screen.getByText('Bạn')).toBeInTheDocument()
@@ -118,11 +139,24 @@ it('searches across folders and displays the document breadcrumb', async () => {
 })
 
 it('persists the selected list view', async () => {
-  renderPage('/library?folder=personal')
+  renderPage('/library?folder=personal&workspace=workspace-1')
   await screen.findByText('Ghi chú cá nhân.pdf')
 
   fireEvent.click(screen.getByRole('button', { name: 'Dạng danh sách' }))
 
   await waitFor(() => expect(localStorage.getItem('fstu.library.view')).toBe('list'))
   expect(screen.getByRole('columnheader', { name: 'Ngày đăng' })).toBeInTheDocument()
+})
+
+it('shows each personal workspace as a folder and reveals only its documents when opened', async () => {
+  renderPage('/library?folder=personal')
+
+  const personalFolder = await screen.findByRole('button', { name: /workspace Tài liệu cá nhân/i })
+  expect(screen.getByRole('button', { name: /workspace Toán/i })).toBeInTheDocument()
+  expect(screen.queryByText('Ghi chú cá nhân.pdf')).not.toBeInTheDocument()
+
+  fireEvent.click(personalFolder)
+
+  expect(await screen.findByText('Ghi chú cá nhân.pdf')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Tài liệu cá nhân' })).toBeInTheDocument()
 })

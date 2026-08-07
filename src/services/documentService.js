@@ -8,9 +8,9 @@ export async function getDocuments() {
   return enrichDocumentChunkCounts(documents)
 }
 
-export async function getMyDocuments() {
+export async function getMyDocuments({ enrichChunkCounts = true } = {}) {
   const documents = unwrapList(await request('/documents/mine')).map(toUiDocument)
-  return enrichDocumentChunkCounts(documents)
+  return enrichChunkCounts ? enrichDocumentChunkCounts(documents) : documents
 }
 
 export async function getReviewQueue() {
@@ -78,10 +78,10 @@ function uploadDocumentInOneRequest({ file, workspaceId, courseId, chapterId, on
     : request('/documents/upload', { method: 'POST', body: formData })
 }
 
-export async function uploadPersonalDocument({ file, onIndexingProgress, onUploadProgress }) {
+export async function uploadPersonalDocument({ file, workspaceId, onIndexingProgress, onUploadProgress }) {
   const result = shouldUseResumable(file)
-    ? await uploadFileResumable({ file, onUploadProgress })
-    : await uploadPersonalInOneRequest(file, onUploadProgress)
+    ? await uploadFileResumable({ file, workspaceId, onUploadProgress })
+    : await uploadPersonalInOneRequest(file, workspaceId, onUploadProgress)
   const document = await enrichDocumentChunkCount(toUiDocument(result?.document ?? result))
   if (
     document.id
@@ -92,9 +92,10 @@ export async function uploadPersonalDocument({ file, onIndexingProgress, onUploa
   return document
 }
 
-function uploadPersonalInOneRequest(file, onUploadProgress) {
+function uploadPersonalInOneRequest(file, workspaceId, onUploadProgress) {
   const formData = new FormData()
   formData.append('file', file)
+  if (workspaceId) formData.append('workspaceId', workspaceId)
   return onUploadProgress
     ? uploadFormData('/documents/personal', formData, onUploadProgress)
     : request('/documents/personal', { method: 'POST', body: formData })

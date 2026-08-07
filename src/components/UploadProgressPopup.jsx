@@ -3,10 +3,11 @@ import { CheckCircle2, ChevronDown, FileText, Loader2, RotateCcw, Trash2, Upload
 import { useEffect, useMemo, useState } from 'react'
 import { clearFinishedUploads, removeUpload, retryUpload, subscribe } from '../services/uploadService.js'
 import { useLocale } from '../i18n/LocaleContext.jsx'
+import { localizeApiError } from '../i18n/apiErrorCopy.js'
 import { cn } from '../utils/cn.js'
 
 export function UploadProgressPopup() {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
   const [uploads, setUploads] = useState([])
   const [collapsed, setCollapsed] = useState(false)
   const [dismissedBefore, setDismissedBefore] = useState(0)
@@ -93,7 +94,7 @@ export function UploadProgressPopup() {
             >
               <div className="space-y-2">
                 {visibleUploads.map((upload) => (
-                  <UploadProgressItem key={upload.id} t={t} upload={upload} />
+                  <UploadProgressItem key={upload.id} locale={locale} t={t} upload={upload} />
                 ))}
               </div>
             </motion.div>
@@ -104,7 +105,7 @@ export function UploadProgressPopup() {
   )
 }
 
-function UploadProgressItem({ t, upload }) {
+function UploadProgressItem({ locale, t, upload }) {
   const failed = upload.status === 'Failed'
   const completed = isCompletedUpload(upload)
   const active = isActiveUpload(upload)
@@ -132,7 +133,7 @@ function UploadProgressItem({ t, upload }) {
               <p className="truncate text-sm font-black text-slate-900">{upload.name}</p>
               <p className={cn('mt-0.5 line-clamp-2 text-xs font-semibold', failed ? 'text-red-600' : 'text-slate-500')}>
                 {failed
-                  ? upload.errorMessage
+                  ? localizeApiError(upload.errorMessage, locale)
                   : upload.previewKey
                     ? t(upload.previewKey, upload.previewParams)
                     : upload.preview}

@@ -1,5 +1,5 @@
 import {
-  ArrowRight, Check, Clock3, Crown, Database, FileText, HardDrive,
+  ArrowRight, Check, Clock3, Crown, FileText, HardDrive,
   Loader2, RefreshCw, ShieldCheck, Sparkles, WalletCards, Workflow,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -15,7 +15,7 @@ const copy = {
     subtitle: 'Giá, thời hạn và hạn mức bên dưới được đọc trực tiếp từ hệ thống. Mỗi tài khoản chỉ được dùng một gói trả phí tại một thời điểm.',
     current: 'Gói hiện tại', expires: 'Hết hạn', noExpiry: 'Không giới hạn thời gian', active: 'Đang hoạt động',
     choose: 'Đăng ký', availableAfter: 'Đăng ký lại sau', redirecting: 'Đang tạo giao dịch...', included: 'Quyền lợi',
-    file: 'mỗi tệp', documents: 'tài liệu', storage: 'tổng dung lượng', workspaces: 'Personal Workspace',
+    file: 'mỗi tệp', storage: 'tổng dung lượng', workspaces: 'không gian cá nhân',
     accountWide: 'Hạn mức được tính trên toàn tài khoản.', history: 'Lịch sử đăng ký', noHistory: 'Chưa có lần nâng cấp nào.',
     paidAt: 'Thanh toán', validUntil: 'Hiệu lực đến', days: 'ngày', retry: 'Tải lại', loadError: 'Không thể tải thông tin gói.',
     unavailable: 'VNPay chưa được cấu hình. Vui lòng liên hệ quản trị viên.', secure: 'Xác nhận bởi IPN',
@@ -29,7 +29,7 @@ const copy = {
     subtitle: 'Pricing, duration, and quotas below come directly from the system. Each account can use only one paid plan at a time.',
     current: 'Current plan', expires: 'Expires', noExpiry: 'No expiry', active: 'Active',
     choose: 'Choose', availableAfter: 'Available after', redirecting: 'Creating transaction...', included: 'Included',
-    file: 'per file', documents: 'documents', storage: 'total storage', workspaces: 'Personal Workspaces',
+    file: 'per file', storage: 'total storage', workspaces: 'personal workspaces',
     accountWide: 'Quotas apply across the whole account.', history: 'Purchase history', noHistory: 'No upgrades yet.',
     paidAt: 'Paid', validUntil: 'Valid until', days: 'days', retry: 'Reload', loadError: 'Could not load plan information.',
     unavailable: 'VNPay has not been configured. Please contact an administrator.', secure: 'Confirmed by IPN',
@@ -154,7 +154,6 @@ function PlanCard({ buying, copy: c, current, hasActivePaidPlan, locale, nextPur
   const featured = plan.planCode === 'PRO'
   const quota = [
     { icon: FileText, label: `${formatBytes(plan.maxFileBytes)} ${c.file}` },
-    { icon: Database, label: `${plan.maxDocuments} ${c.documents}` },
     { icon: HardDrive, label: `${formatBytes(plan.maxStorageBytes)} ${c.storage}` },
     { icon: Workflow, label: `${plan.maxPersonalWorkspaces} ${c.workspaces}` },
   ]
