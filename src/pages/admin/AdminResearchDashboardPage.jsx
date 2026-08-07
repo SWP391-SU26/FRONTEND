@@ -6,8 +6,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { EmptyState, Panel } from '../../components/ui.jsx'
 import { AdminPageHeader } from '../../layouts/AdminLayout.jsx'
+import { useLocale } from '../../i18n/LocaleContext.jsx'
 import { interpolate, useResearchCopy } from '../../i18n/researchCopy.js'
 import * as evaluationService from '../../services/evaluationService.js'
+import { cn } from '../../utils/cn.js'
 
 const ResearchDashboardCharts = lazy(() => import('./ResearchDashboardCharts.jsx')
   .then((module) => ({ default: module.ResearchDashboardCharts })))
@@ -27,6 +29,7 @@ function buildMetrics(copy) {
 
 export function AdminResearchDashboardPage() {
   const copy = useResearchCopy()
+  const { locale } = useLocale()
   const [datasets, setDatasets] = useState([])
   const [experiments, setExperiments] = useState([])
   const [datasetId, setDatasetId] = useState('')
@@ -38,6 +41,7 @@ export function AdminResearchDashboardPage() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('ALL')
   const [expanded, setExpanded] = useState(new Set())
+  const [exportState, setExportState] = useState({ format: '', progress: 0, error: '' })
 
   useEffect(() => {
     let active = true
@@ -83,6 +87,28 @@ export function AdminResearchDashboardPage() {
     setExpanded(new Set())
   }
 
+  const exportReport = async (format) => {
+    if (!comparison || exportState.format) return
+    setExportState({ format, progress: 0, error: '' })
+    try {
+      const report = await evaluationService.createEvaluationReport({
+        datasetId,
+        ragExperimentId,
+        fineTunedExperimentId: fineExperimentId,
+        language: locale,
+        title: locale === 'vi' ? 'Báo cáo thực nghiệm RBL: RAG và Fine-tuned' : 'RBL Experimental Report: RAG vs Fine-tuned',
+      })
+      const completed = await evaluationService.waitForEvaluationReport(report.reportId, {
+        onProgress: (current) => setExportState({ format, progress: Number(current.progress ?? 0), error: '' }),
+      })
+      const blob = await evaluationService.downloadEvaluationReport(completed.reportId, format)
+      downloadBlob(blob, `${safeFilename(comparison.dataset?.name ?? 'flow5')}-rag-vs-finetuned.${format.toLowerCase()}`)
+      setExportState({ format: '', progress: 100, error: '' })
+    } catch (requestError) {
+      setExportState({ format: '', progress: 0, error: requestError.message || copy.exportFailed })
+    }
+  }
+
   return (
     <div className="research-dashboard">
       <div className="report-screen-only">
@@ -105,7 +131,8 @@ export function AdminResearchDashboardPage() {
       {loading ? <Panel className="mt-4 flex min-h-40 items-center justify-center gap-2 p-5 text-sm font-semibold text-slate-600"><span className="size-4 animate-spin rounded-full border-2 border-primary border-r-transparent" />{copy.preparingReport}</Panel> : comparison ? (
         <article className="research-report mt-4 space-y-6" aria-label={copy.reportAria}>
           {!comparison.methodology?.officialRagas ? <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900">{copy.localPending}</div> : null}
-          <ReportTitle copy={copy} comparison={comparison} onCsv={() => downloadComparisonCsv(comparison)} onPrint={() => window.print()} />
+          <ReportTitle copy={copy} comparison={comparison} exportState={exportState} onExport={exportReport} />
+          {exportState.error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{exportState.error}</div> : null}
           <Suspense fallback={<div className="grid min-h-72 place-items-center rounded-2xl border border-slate-200 bg-white/70 text-sm font-semibold text-slate-500">{copy.preparingCharts}</div>}><ResearchDashboardCharts comparison={comparison} /></Suspense>
           <ExecutiveSummary copy={copy} conclusions={conclusions} comparison={comparison} />
 
@@ -255,12 +282,18 @@ function ResearchSelect({ emptyLabel, label, onChange, optionLabel, optionMeta, 
   )
 }
 
-function ReportTitle({ comparison, copy, onCsv, onPrint }) {
+function ReportTitle({ comparison, copy, exportState, onExport }) {
   const dataset = comparison.dataset ?? {}
   return <header className="os-panel overflow-hidden p-6 sm:p-8">
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
       <div><p className="text-xs font-black uppercase tracking-[.16em] text-primary">{copy.output}</p><h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">{copy.comparison}</h1><p className="mt-3 max-w-3xl leading-7 text-slate-600">{interpolate(copy.evaluated, { dataset: dataset.name ?? copy.dataset })}</p></div>
-      <div className="report-actions flex shrink-0 gap-2"><button className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-primary" onClick={onCsv} type="button"><Download size={17} />{copy.exportCsv}</button><button className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:opacity-90" onClick={onPrint} type="button"><FileDown size={17} />{copy.print}</button></div>
+      <div className="report-actions flex shrink-0 flex-wrap gap-2">
+        {['CSV', 'DOCX', 'PDF'].map((format) => {
+          const busy = exportState.format === format
+          const label = format === 'CSV' ? copy.exportCsv : format === 'DOCX' ? copy.exportDocx : copy.print
+          return <button disabled={Boolean(exportState.format)} className={cn('inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold disabled:cursor-wait disabled:opacity-60', format === 'PDF' ? 'bg-primary text-white hover:opacity-90' : 'border border-slate-200 bg-white text-slate-700 hover:border-primary')} key={format} onClick={() => onExport(format)} type="button">{format === 'PDF' ? <FileDown size={17} /> : <Download size={17} />}{busy ? interpolate(copy.generatingExport, { format, progress: exportState.progress }) : label}</button>
+        })}
+      </div>
     </div>
     <dl className="mt-6 grid gap-4 border-t border-slate-200 pt-5 text-sm sm:grid-cols-2 lg:grid-cols-4"><Meta label={copy.questions} value={dataset.questionCount ?? comparison.perQuestion?.length ?? 0} /><Meta label={copy.documents} value={dataset.documentCount ?? '—'} /><Meta label={copy.metricStandard} value={comparison.metricStandard ?? 'RAGAS_OFFICIAL'} /><Meta label={copy.formulaVersion} value={comparison.formulaVersion ?? 'ragas-0.4'} /></dl>
     <p className="mt-4 break-all font-mono text-[11px] text-slate-500">Checksum: {comparison.datasetChecksum}</p>
@@ -326,7 +359,7 @@ export function buildComparisonCsv(comparison) {
   return `\uFEFF${lines.map((line) => line.map(csvCell).join(',')).join('\r\n')}`
 }
 
-function downloadComparisonCsv(comparison) { const blob = new Blob([buildComparisonCsv(comparison)], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `${safeFilename(comparison.dataset?.name ?? 'flow5')}-rag-vs-finetuned.csv`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url) }
+function downloadBlob(blob, filename) { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url) }
 function terminalRuns(experiments, datasetId) { return experiments.filter((run) => run.datasetId === datasetId && ['COMPLETED', 'FAILED'].includes(run.status) && run.datasetChecksum) }
 function selectDataset(id, experiments, setters) { const runs = terminalRuns(experiments, id); setters.setDatasetId(id); setters.setRagExperimentId(runs.find((run) => run.experimentType === 'RAG')?.id ?? ''); setters.setFineExperimentId(runs.find((run) => run.experimentType === 'FINE_TUNED')?.id ?? '') }
 function classifyRow(row) { if (row.ragError || row.fineTunedError) return 'ERROR'; const delta = row.tokenOverlapProxyDelta; if (delta == null || Math.abs(delta) < 0.02) return 'TIE'; return delta > 0 ? 'FINE' : 'RAG' }

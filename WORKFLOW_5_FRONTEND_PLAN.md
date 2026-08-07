@@ -215,6 +215,39 @@ Purpose:
 - Compute summary metrics from real rows only.
 - Show empty/failed/pending states when results are not available.
 
+## Post-run Experiment Evaluation Swimlane
+
+Sơ đồ gồm 3 cột actor và 14 bước, bắt đầu sau khi người dùng xác nhận
+`Run Experiment`. Phạm vi chỉ gồm chạy experiment trên dataset đã chuẩn bị, đánh
+giá từng kết quả, rồi so sánh một RAG run với một Fine-tuned run trên cùng dataset
+snapshot và benchmark profile. Các nhãn trong sơ đồ giữ bằng tiếng Anh theo UI
+language rule của dự án.
+
+PlantUML source: [`WORKFLOW_5_SWIMLANE.puml`](WORKFLOW_5_SWIMLANE.puml).
+
+Render the source directly with a PlantUML extension, or include it from this
+document:
+
+```plantuml
+!include WORKFLOW_5_SWIMLANE.puml
+```
+
+### What Is Evaluated And How It Is Summarized
+
+| Evaluation target | Evidence used | Per-question evaluation | Dashboard summary |
+|---|---|---|---|
+| Answer quality | Question, generated answer, ground truth | Answer relevance; token-overlap proxy stored as answer correctness and semantic similarity | Average quality by run and per-question RAG/Fine-tuned delta |
+| RAG grounding | Retrieved contexts and citations | Faithfulness, context precision, context recall, source hit, page hit | Average RAG grounding and hit rates; not treated as applicable to Fine-tuned-only output |
+| Out-of-scope behavior | Question marked out of scope and generated answer | Refusal correctness | Refusal accuracy |
+| Reliability | Successful or failed result for every question | Error message and result availability | Success rate, success count, failure count, partial-result warning |
+| Performance | Timings and runtime telemetry | Effective latency, batch latency, throughput, peak VRAM | Average latency and throughput plus run metadata |
+| Reproducibility | Dataset checksum, benchmark profile, model/adapter/embedding/prompt versions | Verification status and quality-gate evidence | Comparison is allowed only for the same dataset snapshot and benchmark profile |
+
+Tổng kết không tạo một điểm số duy nhất. Dashboard giữ riêng các nhóm chất lượng,
+grounding, độ tin cậy và hiệu năng; sau đó so sánh RAG với Fine-tuned theo cả trung
+bình toàn bộ run lẫn từng câu hỏi. Kết luận phải kèm giới hạn của dataset và không
+diễn giải `token-overlap proxy` như một metric RAGAS.
+
 ## Updated Implementation Plan
 
 ### Step 1 - Align `evaluationService.js` With Backend Shapes

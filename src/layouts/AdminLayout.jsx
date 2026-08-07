@@ -4,10 +4,13 @@ import {
   BookOpen,
   Brain,
   ClipboardList,
+  CreditCard,
   FileText,
   Gauge,
   Home,
+  Layers3,
   LogOut,
+  MessageSquareWarning,
   Users,
 } from 'lucide-react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
@@ -24,6 +27,9 @@ const adminNav = [
   { href: '/admin/courses', labelKey: 'admin.courses', icon: BookOpen },
   { href: '/admin/test-set', labelKey: 'admin.testSet', icon: ClipboardList },
   { href: '/admin/research-dashboard', labelKey: 'admin.research', icon: BarChart3 },
+  { href: '/admin/feedback', labelKey: 'admin.feedback', icon: MessageSquareWarning },
+  { href: '/admin/payments', labelKey: 'admin.payments', icon: CreditCard },
+  { href: '/admin/plans', labelKey: 'admin.plans', icon: Layers3 },
 ]
 
 const AdminOperationalHealthContext = createContext({

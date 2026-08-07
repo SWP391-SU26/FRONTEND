@@ -34,6 +34,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import 'katex/dist/katex.min.css'
 import { LanguageSwitch } from '../components/LanguageSwitch.jsx'
+import { MessageFeedback } from '../components/MessageFeedback.jsx'
 import StudentSidebar from '../components/StudentSidebar.jsx'
 import { useLocale } from '../i18n/LocaleContext.jsx'
 import {
@@ -47,6 +48,7 @@ import {
   saveNote,
   streamQuestion,
 } from '../services/chatService.js'
+import { getSessionFeedback, submitFeedback } from '../services/feedbackService.js'
 import { getCourseMaterials, getLearningScope } from '../services/courseService.js'
 import { getMyDocuments } from '../services/documentService.js'
 import {
@@ -111,6 +113,7 @@ export default function WorkspacePage() {
   const [noteDraft, setNoteDraft] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  const [feedbackByMessage, setFeedbackByMessage] = useState({})
   const [answering, setAnswering] = useState(false)
   const [answerElapsedMs, setAnswerElapsedMs] = useState(0)
   const [processingPhase, setProcessingPhase] = useState('')
@@ -161,22 +164,49 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     let active = true
-    Promise.all([getLearningScope(), getMyDocuments(), getSessions()])
-      .then(([scope, mine, history]) => {
+    // The chat bootstrap only needs document identity and indexing state. Chunk
+    // totals are Library metadata and would otherwise add one request per file.
+    Promise.allSettled([
+      getLearningScope(),
+      getMyDocuments({ enrichChunkCounts: false }),
+      getSessions(),
+    ])
+      .then(([scopeResult, documentsResult, sessionsResult]) => {
         if (!active) return
+        const scope = scopeResult.status === 'fulfilled' ? scopeResult.value : []
+        const mine = documentsResult.status === 'fulfilled' ? documentsResult.value : []
+        const history = sessionsResult.status === 'fulfilled' ? sessionsResult.value : []
         const next = Array.isArray(scope) ? scope : []
+        const nextPersonalDocuments = (mine ?? []).filter(isProcessedDocument)
         setSemesters(next)
         setSemesterId(next[0]?.semesterId ?? '')
         setCourseId(next[0]?.courses?.[0]?.courseId ?? '')
-        setPersonalDocuments((mine ?? []).filter(isProcessedDocument))
+        setPersonalDocuments(nextPersonalDocuments)
+        if (!next.length && nextPersonalDocuments.length) {
+          setScopeType('PERSONAL')
+          setSelectedDocumentIds([nextPersonalDocuments[0].id])
+        }
         const sortedHistory = sortSessions(history)
         setSessions(sortedHistory)
         const requestedSession = sortedHistory.find(
           (item) => String(item.id) === String(initialSessionIdRef.current),
         )
-        if (requestedSession) setSession(requestedSession)
+        if (requestedSession) {
+          setSession(requestedSession)
+        } else if (initialSessionIdRef.current) {
+          // A bookmarked/deleted/inaccessible chat must not leave the workspace
+          // looking stuck on a session that cannot be loaded.
+          initialSessionIdRef.current = null
+          setUrlSearchParams({}, { replace: true })
+        }
+        const failedResult = [scopeResult, documentsResult, sessionsResult]
+          .find((result) => result.status === 'rejected')
+        if (failedResult) {
+          setStreamError({
+            message: readError(failedResult.reason, t('chat.loadWorkspaceError'), t),
+          })
+        }
       })
-      .catch((error) => setStreamError({ message: readError(error, t('chat.loadWorkspaceError'), t) }))
       .finally(() => active && setLoading(false))
     return () => { active = false }
   // Keep initial workspace loading independent from locale changes so switching
@@ -226,6 +256,20 @@ export default function WorkspacePage() {
     return () => { active = false }
   // Keep message history stable while toggling UI language.
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id])
+
+  // Ratings load separately from the thread: a failure here must leave the
+  // conversation readable, it only means the thumbs start blank.
+  useEffect(() => {
+    let active = true
+    if (!session?.id) {
+      queueMicrotask(() => active && setFeedbackByMessage({}))
+      return () => { active = false }
+    }
+    getSessionFeedback(session.id)
+      .then((map) => active && setFeedbackByMessage(map))
+      .catch(() => active && setFeedbackByMessage({}))
+    return () => { active = false }
   }, [session?.id])
 
   useEffect(() => {
@@ -504,6 +548,14 @@ export default function WorkspacePage() {
     window.setTimeout(() => setCopiedId(''), 1400)
   }
 
+  // Lets the error bubble: MessageFeedback shows the retry hint, and leaving the
+  // thumb unchanged is more honest than pretending the rating was stored.
+  async function rateMessage(messageId, payload) {
+    const saved = await submitFeedback(messageId, payload)
+    setFeedbackByMessage((current) => ({ ...current, [messageId]: saved }))
+    return saved
+  }
+
   async function updatePin(item) {
     setBusySessionId(item.id)
     try {
@@ -585,9 +637,10 @@ export default function WorkspacePage() {
     return <FullScreenState icon={Loader2} spin title={t('chat.loadingWorkspace')} />
   }
 
-  if (!semesters.length) {
-    return <FullScreenState icon={Archive} title={t('chat.noAvailableDocuments')} />
-  }
+  // A brand-new account (no course enrollment yet, nothing uploaded) has no scope
+  // to chat against yet. Render the normal shell anyway instead of blocking the
+  // page: scopeValid below is false, so the composer disables itself and prompts
+  // to pick/upload a document rather than pretending nothing exists.
 
   return (
     <div className="chat-shell-page flex bg-white text-slate-950">
@@ -625,10 +678,12 @@ export default function WorkspacePage() {
         <ChatThread
           activeScopeLabel={scopeLabel}
           copiedId={copiedId}
+          feedbackByMessage={feedbackByMessage}
           loading={loadingMessages}
           messages={messages}
           onCitation={(citation) => { setActiveCitation(citation); setDrawerMode('sources') }}
           onCopy={copyMessage}
+          onRate={rateMessage}
           onSave={prepareNote}
           answerElapsedMs={answerElapsedMs}
           processingPhase={processingPhase}
@@ -722,8 +777,8 @@ function ChatTopbar({ onMenu, onNew, onSources, scopeLabel, t, title }) {
 }
 
 function ChatThread({
-  activeScopeLabel, answerElapsedMs, copiedId, endRef, loading, messages, onCitation, onCopy, onReuseQuestion,
-  onSave, processingPhase, processingTrace, streamError, t,
+  activeScopeLabel, answerElapsedMs, copiedId, endRef, feedbackByMessage = {}, loading, messages, onCitation,
+  onCopy, onRate, onReuseQuestion, onSave, processingPhase, processingTrace, streamError, t,
 }) {
   return (
     <section className="min-h-0 flex-1 overflow-y-auto" aria-label={t('chat.threadLabel')}>
@@ -737,10 +792,12 @@ function ChatThread({
             {messages.map((message) => (
               <ChatMessage
                 copied={copiedId === message.id}
+                feedback={feedbackByMessage[message.id]}
                 key={message.id}
                 message={message}
                 onCitation={onCitation}
                 onCopy={() => onCopy(message)}
+                onRate={onRate}
                 onSave={() => onSave(message)}
                 t={t}
               />
@@ -788,7 +845,7 @@ function ChatThread({
   )
 }
 
-function ChatMessage({ copied, message, onCitation, onCopy, onSave, t }) {
+function ChatMessage({ copied, feedback, message, onCitation, onCopy, onRate, onSave, t }) {
   if (message.role === 'user') {
     return (
       <article className="flex justify-end">
@@ -801,16 +858,20 @@ function ChatMessage({ copied, message, onCitation, onCopy, onSave, t }) {
   return (
     <AssistantMessage
       copied={copied}
+      feedback={feedback}
       message={message}
       onCitation={onCitation}
       onCopy={onCopy}
+      onRate={onRate}
       onSave={onSave}
       t={t}
     />
   )
 }
 
-export function AssistantMessage({ copied, message, onCitation, onCopy, onSave, t = FALLBACK_T }) {
+export function AssistantMessage({
+  copied, feedback, message, onCitation, onCopy, onRate, onSave, t = FALLBACK_T,
+}) {
   const shouldAnimate = Boolean(message.animateResponse && message.content)
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const animate = shouldAnimate && !reducedMotion
@@ -884,11 +945,22 @@ export function AssistantMessage({ copied, message, onCitation, onCopy, onSave, 
           </p>
         ) : null}
         {!isTyping && !message.streaming && message.content ? (
-          <div className="mt-3 flex gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+          <div className="mt-3 flex flex-wrap items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
             <IconAction label={t('chat.copy')} onClick={onCopy}>
               {copied ? <Check className="text-emerald-600" size={15} /> : <Clipboard size={15} />}
             </IconAction>
             <IconAction label={t('chat.saveAsNote')} onClick={onSave}><NotebookPen size={15} /></IconAction>
+            {onRate && message.id ? (
+              <>
+                <span aria-hidden="true" className="mx-1 h-5 w-px bg-slate-200" />
+                <MessageFeedback
+                  feedback={feedback}
+                  messageId={message.id}
+                  onSubmit={onRate}
+                  t={t}
+                />
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>

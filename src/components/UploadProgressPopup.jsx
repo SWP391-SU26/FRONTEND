@@ -1,10 +1,13 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { CheckCircle2, ChevronDown, FileText, Loader2, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FileText, Loader2, RotateCcw, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { clearFinishedUploads, removeUpload, subscribe } from '../services/uploadService.js'
+import { clearFinishedUploads, removeUpload, retryUpload, subscribe } from '../services/uploadService.js'
+import { useLocale } from '../i18n/LocaleContext.jsx'
+import { localizeApiError } from '../i18n/apiErrorCopy.js'
 import { cn } from '../utils/cn.js'
 
 export function UploadProgressPopup() {
+  const { locale, t } = useLocale()
   const [uploads, setUploads] = useState([])
   const [collapsed, setCollapsed] = useState(false)
   const [dismissedBefore, setDismissedBefore] = useState(0)
@@ -38,10 +41,13 @@ export function UploadProgressPopup() {
             </div>
             <div className="min-w-0">
               <h2 className="truncate text-sm font-black text-slate-950">
-                {activeCount > 0 ? `${activeCount} file task${activeCount > 1 ? 's' : ''} in progress` : 'File activity finished'}
+                {activeCount > 0
+                  ? t('uploadProgress.tasksInProgress', { count: activeCount })
+                  : t('uploadProgress.activityFinished')}
               </h2>
               <p className="text-xs font-semibold text-slate-500">
-                {completedCount} completed{failedCount ? `, ${failedCount} failed` : ''}
+                {t('uploadProgress.completed', { count: completedCount })}
+                {failedCount ? `, ${t('uploadProgress.failed', { count: failedCount })}` : ''}
               </p>
             </div>
           </div>
@@ -53,11 +59,11 @@ export function UploadProgressPopup() {
                 onClick={clearFinishedUploads}
                 type="button"
               >
-                Clear
+                {t('uploadProgress.clear')}
               </button>
             ) : null}
             <button
-              aria-label={collapsed ? 'Expand upload progress' : 'Collapse upload progress'}
+              aria-label={collapsed ? t('uploadProgress.expand') : t('uploadProgress.collapse')}
               className="grid size-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               onClick={() => setCollapsed((value) => !value)}
               type="button"
@@ -67,10 +73,10 @@ export function UploadProgressPopup() {
               </motion.span>
             </button>
             <button
-              aria-label="Close upload progress"
+              aria-label={t('uploadProgress.close')}
               className="grid size-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               onClick={() => setDismissedBefore(Date.now())}
-              title="Ẩn tiến trình upload"
+              title={t('uploadProgress.hide')}
               type="button"
             >
               <X size={17} />
@@ -88,7 +94,7 @@ export function UploadProgressPopup() {
             >
               <div className="space-y-2">
                 {visibleUploads.map((upload) => (
-                  <UploadProgressItem key={upload.id} upload={upload} />
+                  <UploadProgressItem key={upload.id} locale={locale} t={t} upload={upload} />
                 ))}
               </div>
             </motion.div>
@@ -99,7 +105,7 @@ export function UploadProgressPopup() {
   )
 }
 
-function UploadProgressItem({ upload }) {
+function UploadProgressItem({ locale, t, upload }) {
   const failed = upload.status === 'Failed'
   const completed = isCompletedUpload(upload)
   const active = isActiveUpload(upload)
@@ -126,18 +132,35 @@ function UploadProgressItem({ upload }) {
             <div className="min-w-0">
               <p className="truncate text-sm font-black text-slate-900">{upload.name}</p>
               <p className={cn('mt-0.5 line-clamp-2 text-xs font-semibold', failed ? 'text-red-600' : 'text-slate-500')}>
-                {failed ? upload.errorMessage : upload.preview}
+                {failed
+                  ? localizeApiError(upload.errorMessage, locale)
+                  : upload.previewKey
+                    ? t(upload.previewKey, upload.previewParams)
+                    : upload.preview}
               </p>
             </div>
             {!active ? (
-              <button
-                aria-label={`Dismiss ${upload.name}`}
-                className="grid size-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
-                onClick={() => removeUpload(upload.id)}
-                type="button"
-              >
-                <X size={14} />
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {failed && upload.documentId && upload.action !== 'DELETE' ? (
+                  <button
+                    aria-label={t('uploadProgress.retry')}
+                    className="grid size-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-teal-600"
+                    onClick={() => retryUpload(upload)}
+                    title={t('uploadProgress.retry')}
+                    type="button"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                ) : null}
+                <button
+                  aria-label={t('uploadProgress.dismiss', { name: upload.name })}
+                  className="grid size-7 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
+                  onClick={() => removeUpload(upload.id)}
+                  type="button"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             ) : null}
           </div>
 
@@ -150,7 +173,7 @@ function UploadProgressItem({ upload }) {
               />
             </div>
             <span className={cn('w-10 text-right text-[11px] font-black', failed ? 'text-red-600' : 'text-slate-500')}>
-              {failed ? 'Fail' : `${Math.round(progress)}%`}
+              {failed ? t('uploadProgress.fail') : `${Math.round(progress)}%`}
             </span>
           </div>
         </div>

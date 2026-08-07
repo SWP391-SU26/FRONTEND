@@ -1,9 +1,75 @@
 import {
   deleteDocument,
+  getMyDocuments,
+  retryDocumentProcessing,
   uploadDocument,
+  uploadPersonalDocument,
   waitForDocumentIndexing,
   waitForIndexingJob,
 } from './documentService.js'
+
+const RESUMABLE_STATUSES = new Set(['Pending', 'Processing', 'Uploaded'])
+
+// The raw file transfer owns 0-UPLOAD_PHASE_END%; everything from there to 100%
+// is the backend job's own percent (QUEUED..EXTRACTING..OCR..CHUNKING..EMBEDDING..
+// COMPLETED, already 0-100 across the whole pipeline) rescaled into the remainder,
+// so the bar rises continuously through every stage instead of sitting on a floor
+// value until embedding starts and then jumping straight to 100.
+const UPLOAD_PHASE_END = 15
+
+function scaleIndexingPercent(percent) {
+  const safePercent = Number.isFinite(percent) ? percent : 0
+  return UPLOAD_PHASE_END + Math.round(safePercent * ((100 - UPLOAD_PHASE_END) / 100))
+}
+
+/**
+ * Maps a polled document (optionally carrying live job progress) onto the upload
+ * card. Server-side percent covers extraction → OCR → chunking → embedding, so
+ * the bar advances continuously instead of jumping 45% → 100%.
+ */
+function indexingPatch(document) {
+  const job = document.job
+  const indexed = document.status === 'Indexed'
+  if (indexed) {
+    return {
+      status: document.status,
+      stage: 'Completed',
+      progress: 100,
+      indexingProgress: 100,
+      previewKey: 'uploadProgress.uploadIndexed',
+    }
+  }
+  if (!job) {
+    return {
+      status: document.status,
+      stage: 'Indexing',
+      progress: UPLOAD_PHASE_END,
+      previewKey: 'uploadProgress.embedding',
+    }
+  }
+  const progress = Math.min(99, Math.max(UPLOAD_PHASE_END, scaleIndexingPercent(job.percent)))
+  const hasCounts = Number.isFinite(job.processedItems) && Number.isFinite(job.totalItems)
+  return {
+    status: document.status,
+    stage: 'Indexing',
+    progress,
+    indexingProgress: job.percent,
+    previewKey: hasCounts ? 'uploadProgress.embeddingCount' : stepPreviewKey(job.step),
+    previewParams: hasCounts
+      ? { done: job.processedItems, total: job.totalItems }
+      : undefined,
+  }
+}
+
+function stepPreviewKey(step) {
+  switch (step) {
+    case 'EXTRACTING': return 'uploadProgress.extracting'
+    case 'OCR': return 'uploadProgress.ocr'
+    case 'CHUNKING': return 'uploadProgress.chunking'
+    case 'EMBEDDING': return 'uploadProgress.embedding'
+    default: return 'uploadProgress.preparingDocument'
+  }
+}
 
 let uploads = []
 const listeners = new Set()
@@ -28,15 +94,23 @@ export function uploadFile(file, metadata) {
   return startUpload(file, metadata).promise
 }
 
+export function uploadPersonalFiles(files, workspaceId) {
+  return Array.from(files).map((file) => startUpload(file, { scope: 'PERSONAL', workspaceId }))
+}
+
+export function uploadPersonalFile(file, workspaceId) {
+  return startUpload(file, { scope: 'PERSONAL', workspaceId }).promise
+}
+
 export function deleteFile(document) {
   const id = `delete-${Date.now()}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`
-  const task = { id, action: 'DELETE', name: document.displayName ?? document.name ?? document.originalFilename ?? 'Document', status: 'Deleting', stage: 'Deleting', progress: 10, preview: 'Removing document, chunks, and stored file…', isUploading: true, createdAt: Date.now() }
+  const task = { id, action: 'DELETE', name: document.displayName ?? document.name ?? document.originalFilename ?? 'Document', status: 'Deleting', stage: 'Deleting', progress: 10, previewKey: 'uploadProgress.removingDocument', isUploading: true, createdAt: Date.now() }
   uploads = [task, ...uploads]
   notify()
   return deleteDocument(document.id ?? document.documentId).then(() => {
-    updateUpload(id, { status: 'Deleted', stage: 'Completed', progress: 100, preview: 'Document deleted.', isUploading: false, completedAt: Date.now() })
+    updateUpload(id, { status: 'Deleted', stage: 'Completed', progress: 100, previewKey: 'uploadProgress.documentDeleted', isUploading: false, completedAt: Date.now() })
   }).catch((error) => {
-    updateUpload(id, { status: 'Failed', stage: 'Failed', progress: 100, preview: error.message, errorMessage: error.message, isUploading: false, completedAt: Date.now() })
+    updateUpload(id, { status: 'Failed', stage: 'Failed', progress: 100, previewKey: '', preview: error.message, errorMessage: error.message, isUploading: false, completedAt: Date.now() })
     throw error
   })
 }
@@ -49,6 +123,90 @@ export function removeUpload(id) {
 export function clearFinishedUploads() {
   uploads = uploads.filter((item) => item.isUploading && item.status !== 'Failed' && item.progress < 100)
   notify()
+}
+
+/**
+ * Re-attaches the activity popup to any document still processing on the
+ * backend. Call once when the app mounts so navigating away, reloading, or
+ * logging back in doesn't make an in-progress upload disappear from view —
+ * the job itself keeps running server-side regardless.
+ */
+export function resumeActiveUploads() {
+  // Resuming only needs identity and processing state. Live job polling below
+  // supplies progress/counts, so fetching every document's chunks here delays
+  // the whole app without improving the restored upload card.
+  return getMyDocuments({ enrichChunkCounts: false })
+    .then((documents) => {
+      documents
+        .filter((doc) => RESUMABLE_STATUSES.has(doc.status))
+        .filter((doc) => !uploads.some((item) => item.documentId === doc.id))
+        .forEach((doc) => trackExistingDocument(doc))
+    })
+    .catch(() => {
+      // Best-effort: if this fails, the popup just stays empty until the next upload.
+    })
+}
+
+export function retryUpload(document) {
+  const documentId = document.id ?? document.documentId
+  return retryDocumentProcessing(documentId).then(() => {
+    uploads = uploads.filter((item) => item.documentId !== documentId)
+    trackExistingDocument({ ...document, id: documentId, status: 'Processing' })
+  })
+}
+
+function trackExistingDocument(document) {
+  const uploadId = `resume-${document.id}-${Date.now()}`
+  const newUpload = {
+    id: uploadId,
+    documentId: document.id,
+    name: document.name ?? 'Document',
+    displayName: document.displayName ?? document.name ?? 'Document',
+    type: document.type || 'FILE',
+    status: document.status,
+    stage: 'Indexing',
+    progress: UPLOAD_PHASE_END,
+    uploadProgress: 100,
+    indexingProgress: null,
+    chunks: document.chunks ?? 0,
+    previewKey: 'uploadProgress.embedding',
+    isUploading: true,
+    createdAt: Date.now(),
+  }
+  uploads = [newUpload, ...uploads]
+  notify()
+
+  waitForDocumentIndexing(document.id, {
+    onProgress: (doc) => {
+      updateUpload(uploadId, { ...doc, ...indexingPatch(doc) })
+    },
+  })
+    .then((indexedDocument) => {
+      const completedDoc = { ...indexedDocument, status: 'Indexed', embeddingStatus: 'Prepared' }
+      updateUpload(uploadId, {
+        ...completedDoc,
+        isUploading: false,
+        status: 'Indexed',
+        stage: 'Completed',
+        progress: 100,
+        previewKey: 'uploadProgress.uploadCompleted',
+        completedAt: Date.now(),
+      })
+      window.dispatchEvent(new CustomEvent('fstu:document-uploaded', { detail: completedDoc }))
+    })
+    .catch((error) => {
+      const indexingStillRunning = error.code === 'INDEXING_TIMEOUT'
+      updateUpload(uploadId, {
+        status: indexingStillRunning ? 'Processing' : 'Failed',
+        stage: indexingStillRunning ? 'Indexing' : 'Failed',
+        progress: indexingStillRunning ? 90 : 100,
+        previewKey: '',
+        preview: error.message,
+        isUploading: false,
+        errorMessage: indexingStillRunning ? '' : error.message,
+        completedAt: Date.now(),
+      })
+    })
 }
 
 function startUpload(file, metadata) {
@@ -68,7 +226,7 @@ function startUpload(file, metadata) {
     chunks: 0,
     size: `${Math.max(0.1, file.size / 1024 / 1024).toFixed(1)} MB`,
     uploadedAt: new Date(createdAt).toLocaleString(),
-    preview: 'Waiting to upload...',
+    previewKey: 'uploadProgress.waiting',
     workspaceId: metadata.workspaceId,
     courseId: metadata.courseId,
     chapterId: metadata.chapterId,
@@ -89,8 +247,48 @@ async function runUpload(uploadId, file, metadata) {
       status: 'Uploading',
       stage: 'Uploading',
       progress: 1,
-      preview: 'Sending file to backend...',
+      previewKey: 'uploadProgress.sending',
     })
+
+    if (metadata.scope === 'PERSONAL') {
+      const personalDocument = await uploadPersonalDocument({
+        file,
+        workspaceId: metadata.workspaceId,
+        onUploadProgress: (percent) => {
+          updateUpload(uploadId, {
+            uploadProgress: percent,
+            progress: percent >= 100
+              ? UPLOAD_PHASE_END
+              : clampProgress(Math.round(percent * (UPLOAD_PHASE_END / 100))),
+            stage: percent >= 100 ? 'Processing' : 'Uploading',
+            previewKey: percent >= 100
+              ? 'uploadProgress.preparingDocument'
+              : 'uploadProgress.uploading',
+          })
+        },
+        onIndexingProgress: (document) => {
+          updateUpload(uploadId, { ...document, ...indexingPatch(document) })
+        },
+      })
+      const completedPersonalDocument = {
+        ...personalDocument,
+        status: 'Indexed',
+        embeddingStatus: 'Prepared',
+      }
+      updateUpload(uploadId, {
+        ...completedPersonalDocument,
+        isUploading: false,
+        status: 'Indexed',
+        stage: 'Completed',
+        progress: 100,
+        previewKey: 'uploadProgress.uploadCompleted',
+        completedAt: Date.now(),
+      })
+      window.dispatchEvent(new CustomEvent('fstu:document-uploaded', {
+        detail: completedPersonalDocument,
+      }))
+      return completedPersonalDocument
+    }
 
     const result = await uploadDocument({
       file,
@@ -100,8 +298,8 @@ async function runUpload(uploadId, file, metadata) {
       onUploadProgress: (percent) => {
         updateUpload(uploadId, {
           uploadProgress: percent,
-          progress: clampProgress(Math.round(percent * 0.45)),
-          preview: 'Uploading file...',
+          progress: clampProgress(Math.round(percent * (UPLOAD_PHASE_END / 100))),
+          previewKey: 'uploadProgress.uploading',
         })
       },
     })
@@ -111,9 +309,11 @@ async function runUpload(uploadId, file, metadata) {
       ...uploadedDoc,
       status: result.job?.id ? 'Processing' : uploadedDoc.status,
       stage: result.job?.id ? 'Indexing' : 'Uploaded',
-      progress: result.job?.id ? 50 : 100,
+      progress: result.job?.id ? UPLOAD_PHASE_END : 100,
       uploadProgress: 100,
-      preview: result.job?.id ? 'Indexing document chunks...' : 'Upload completed.',
+      previewKey: result.job?.id
+        ? 'uploadProgress.indexingChunks'
+        : 'uploadProgress.uploadCompleted',
     })
 
     let indexedDocument = uploadedDoc
@@ -125,8 +325,9 @@ async function runUpload(uploadId, file, metadata) {
             status: job.stage === 'INDEXED' ? 'Indexed' : 'Processing',
             stage: formatStage(job.stage),
             indexingProgress,
-            progress: clampProgress(45 + Math.round(indexingProgress * 0.55)),
-            preview: `Indexing: ${formatStage(job.stage)}`,
+            progress: clampProgress(scaleIndexingPercent(indexingProgress)),
+            previewKey: 'uploadProgress.indexingStage',
+            previewParams: { stage: formatStage(job.stage) },
           })
         },
       })
@@ -136,15 +337,7 @@ async function runUpload(uploadId, file, metadata) {
     ) {
       indexedDocument = await waitForDocumentIndexing(uploadedDoc.id, {
         onProgress: (document) => {
-          updateUpload(uploadId, {
-            ...document,
-            status: document.status,
-            stage: document.status === 'Indexed' ? 'Completed' : 'Indexing',
-            progress: document.status === 'Indexed' ? 100 : 55,
-            preview: document.status === 'Indexed'
-              ? 'Upload and indexing completed.'
-              : 'Creating semantic embeddings...',
-          })
+          updateUpload(uploadId, { ...document, ...indexingPatch(document) })
         },
       })
     }
@@ -162,7 +355,7 @@ async function runUpload(uploadId, file, metadata) {
       status: 'Indexed',
       stage: 'Completed',
       progress: 100,
-      preview: 'Upload completed.',
+      previewKey: 'uploadProgress.uploadCompleted',
       completedAt: Date.now(),
     })
 
@@ -174,6 +367,7 @@ async function runUpload(uploadId, file, metadata) {
       status: indexingStillRunning ? 'Processing' : 'Failed',
       stage: indexingStillRunning ? 'Indexing' : 'Failed',
       progress: indexingStillRunning ? 90 : 100,
+      previewKey: '',
       preview: error.message,
       isUploading: false,
       errorMessage: indexingStillRunning ? '' : error.message,

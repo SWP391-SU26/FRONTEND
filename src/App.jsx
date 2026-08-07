@@ -18,6 +18,12 @@ import LibraryPage from './pages/LibraryPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import WorkspacePage from './pages/WorkspacePage.jsx'
 import SemesterWorkspacePage from './pages/admin/SemesterWorkspacePage.jsx'
+import AdminPaymentsPage from './pages/admin/AdminPaymentsPage.jsx'
+import PaymentResultPage from './pages/PaymentResultPage.jsx'
+import ProPlanPage from './pages/ProPlanPage.jsx'
+import PaymentsPage from './pages/PaymentsPage.jsx'
+import AdminPlansPage from './pages/admin/AdminPlansPage.jsx'
+import AdminFeedbackPage from './pages/admin/AdminFeedbackPage.jsx'
 import { UploadProgressPopup } from './components/UploadProgressPopup.jsx'
 import {
   getDefaultRouteForUser,
@@ -25,6 +31,7 @@ import {
   isAdminSession,
   isAuthenticated,
 } from './services/authService.js'
+import { resumeActiveUploads } from './services/uploadService.js'
 
 function App() {
   const [, setAuthVersion] = useState(0)
@@ -33,6 +40,12 @@ function App() {
     const handleUnauthorized = () => setAuthVersion((value) => value + 1)
     window.addEventListener('fstu:unauthorized', handleUnauthorized)
     return () => window.removeEventListener('fstu:unauthorized', handleUnauthorized)
+  }, [])
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      resumeActiveUploads()
+    }
   }, [])
 
   return (
@@ -46,6 +59,9 @@ function App() {
       <Route element={<PublicOnly><ResetPasswordPage /></PublicOnly>} path="/reset-password" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/settings" />
       <Route element={<RequireAuth><SettingsPage /></RequireAuth>} path="/profile" />
+      <Route element={<RequireAuth><ProPlanPage /></RequireAuth>} path="/pro" />
+      <Route element={<RequireAuth><PaymentsPage /></RequireAuth>} path="/payments" />
+      <Route element={<RequireAuth><PaymentResultPage /></RequireAuth>} path="/payment/result" />
       <Route element={<RequireAdmin><AdminLayout /></RequireAdmin>} path="/admin">
         <Route index element={<AdminIndex />} />
         <Route path="dashboard" element={<RequireAdmin><AdminDashboardPage /></RequireAdmin>} />
@@ -55,6 +71,9 @@ function App() {
         <Route path="subjects" element={<RequireAdmin><Navigate replace to="/admin/courses" /></RequireAdmin>} />
         <Route path="test-set" element={<AdminTestSetPage />} />
         <Route path="research-dashboard" element={<AdminResearchDashboardPage />} />
+        <Route path="payments" element={<AdminPaymentsPage />} />
+        <Route path="plans" element={<AdminPlansPage />} />
+        <Route path="feedback" element={<AdminFeedbackPage />} />
         {/* Redirects: old standalone pages → unified Research Dashboard */}
         <Route path="indexing" element={<Navigate replace to="/admin/research-dashboard" />} />
         <Route path="model-settings" element={<Navigate replace to="/admin/research-dashboard" />} />
@@ -104,8 +123,9 @@ function PublicOnly({ children }) {
 }
 
 function RequireAuth({ children }) {
+  const location = useLocation()
   if (!isAuthenticated()) {
-    return <Navigate replace to="/login" />
+    return <Navigate replace state={{ returnTo: `${location.pathname}${location.search}` }} to="/login" />
   }
 
   return children

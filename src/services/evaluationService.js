@@ -141,6 +141,42 @@ export async function getComparison({ datasetId, ragExperimentId, fineTunedExper
   return request(`/evaluation/comparison?${query}`)
 }
 
+export async function createEvaluationReport({
+  datasetId,
+  ragExperimentId,
+  fineTunedExperimentId,
+  language,
+  title,
+}) {
+  return request('/evaluation/reports', {
+    method: 'POST',
+    body: JSON.stringify({ datasetId, ragExperimentId, fineTunedExperimentId, language, title }),
+  })
+}
+
+export async function getEvaluationReport(reportId) {
+  return request(`/evaluation/reports/${reportId}`)
+}
+
+export async function waitForEvaluationReport(reportId, { onProgress, timeoutMs = 120000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const report = await getEvaluationReport(reportId)
+    onProgress?.(report)
+    if (report.status === 'COMPLETED') return report
+    if (report.status === 'FAILED') {
+      throw new Error(report.errorMessage || 'Report generation failed.')
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 1000))
+  }
+  throw new Error('Report generation is still running. Please try downloading it again shortly.')
+}
+
+export function downloadEvaluationReport(reportId, format) {
+  const query = new URLSearchParams({ format: String(format).toUpperCase() })
+  return request(`/evaluation/reports/${reportId}/download?${query}`, { responseType: 'blob' })
+}
+
 export function createFineTuningRecord({ name, datasetId, llmModel, configJson }) {
   return request('/fine-tuning/experiments', {
     method: 'POST',
